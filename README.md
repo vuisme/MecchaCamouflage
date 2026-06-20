@@ -1,3 +1,11 @@
+<p align="center">
+  <img
+    src="assets/meccha-camouflage-banner.png"
+    alt="Meccha Camouflage banner"
+    width="100%"
+  />
+</p>
+
 # MecchaCamouflage
 
 Mod for [MECCHA CHAMELEON](https://store.steampowered.com/app/4704690/).
