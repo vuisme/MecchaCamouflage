@@ -10,18 +10,18 @@
 
 Mod for [MECCHA CHAMELEON](https://store.steampowered.com/app/4704690/).
 
-[Download the latest release](https://github.com/acentrist/MecchaCamouflage/releases/latest).
+[Download](https://github.com/acentrist/MecchaCamouflage/releases/latest).
 
-Open the MECCHA CHAMELEON Steam game folder, then extract the release zip into:
+Extract the release zip into:
 
 ```text
-Chameleon\Binaries\Win64
+C:\Program Files (x86)\Steam\steamapps\common\MECCHA CHAMELEON\Chameleon\Binaries\Win64
 ```
 
 After extraction, the important files should look like this:
 
 ```text
-MECCHA CHAMELEON\
+C:\Program Files (x86)\Steam\steamapps\common\MECCHA CHAMELEON\
   Chameleon\
     Binaries\
       Win64\
@@ -58,4 +58,4 @@ In game, aim the camera at the background you want to match, then press `F10`.
 
 Use at your own risk.
 
-License: MIT
+License: [MIT](LICENSE.txt)
