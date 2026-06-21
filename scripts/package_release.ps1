@@ -1,6 +1,5 @@
 param(
     [string]$BuildDir = "",
-    [string]$DllPath = "",
     [string]$Version = "1.0.0",
     [string]$OutDir = "",
     [string]$UE4SSRuntimeRoot = $env:UE4SS_RUNTIME_ROOT,
@@ -31,19 +30,11 @@ function Resolve-FileFromRoot([string]$Root, [string[]]$RelativePaths, [string]$
     throw "$Name was not found under $Root"
 }
 
-if ($DllPath) {
-    if (-not (Test-Path $DllPath -PathType Leaf)) {
-        throw "$ModName.dll was not found at $DllPath"
-    }
-    $DllFile = Get-Item $DllPath
-}
-else {
-    $DllFile = Get-ChildItem $BuildDir -Recurse -Filter "$ModName.dll" |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    if (-not $DllFile) {
-        throw "$ModName.dll was not found under $BuildDir"
-    }
+$DllFile = Get-ChildItem $BuildDir -Recurse -Filter "$ModName.dll" |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+if (-not $DllFile) {
+    throw "$ModName.dll was not found under $BuildDir"
 }
 
 if (-not (Test-Path $UE4SSRuntimeRoot -PathType Container)) {

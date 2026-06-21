@@ -22,6 +22,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup SSH for private UEPseudo submodule
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.UEPSEUDO_DEPLOY_KEY }}
+
+      - name: Checkout RE-UE4SS
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch meccha-v3.0.1 https://github.com/acentrist/RE-UE4SS.git external/RE-UE4SS
+          git -C external/RE-UE4SS submodule sync --recursive
+          git -C external/RE-UE4SS submodule update --init --recursive
+          if (-not (Test-Path "external/RE-UE4SS/deps/first/Unreal/CMakeLists.txt")) {
+            throw "RE-UE4SS deps/first/Unreal submodule was not checked out"
+          }
+          if (-not (Test-Path "external/RE-UE4SS/deps/first/patternsleuth/Cargo.toml")) {
+            throw "RE-UE4SS deps/first/patternsleuth submodule was not checked out"
+          }
+
       - name: Download UE4SS runtime
         shell: pwsh
         run: |
@@ -31,15 +49,30 @@ jobs:
             -OutFile "external/UE4SS_v3.0.1.zip"
           Expand-Archive -Force "external/UE4SS_v3.0.1.zip" "external/UE4SS-runtime"
 
-      - name: Verify prebuilt DLL
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Ensure Ninja
         shell: pwsh
         run: |
-          $dll = "prebuilt\MecchaCamouflage.dll"
-          if (-not (Test-Path $dll -PathType Leaf)) {
-            throw "Missing prebuilt MecchaCamouflage.dll"
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            choco install ninja -y
           }
-          Get-Item $dll
-          Get-FileHash $dll -Algorithm SHA256
+          ninja --version
+
+      - name: Ensure Rust
+        shell: pwsh
+        run: |
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Build
+        shell: pwsh
+        run: |
+          .\scripts\build.ps1 -UE4SSRoot "$env:GITHUB_WORKSPACE\external\RE-UE4SS"
 
       - name: Runtime route check
         shell: pwsh
@@ -56,8 +89,8 @@ jobs:
           $version = $version.TrimStart("v")
           .\scripts\package_release.ps1 `
             -Version $version `
-            -DllPath "$env:GITHUB_WORKSPACE\prebuilt\MecchaCamouflage.dll" `
-            -UE4SSRuntimeRoot "$env:GITHUB_WORKSPACE\external\UE4SS-runtime"
+            -UE4SSRuntimeRoot "$env:GITHUB_WORKSPACE\external\UE4SS-runtime" `
+            -UE4SSLicensePath "$env:GITHUB_WORKSPACE\external\RE-UE4SS\LICENSE"
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [IO.Compression.ZipFile]::OpenRead("$env:GITHUB_WORKSPACE\dist\meccha-camouflage-$version.zip")
           $entries = $zip.Entries | ForEach-Object { $_.FullName }
