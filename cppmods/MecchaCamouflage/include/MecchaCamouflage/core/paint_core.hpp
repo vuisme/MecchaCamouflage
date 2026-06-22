@@ -477,6 +477,26 @@ namespace MecchaCamouflage::Core
         std::string failure{"not_run"};
     };
 
+    struct SampledReadbackTickInput
+    {
+        int total_samples{0};
+        int cursor{0};
+        int max_samples_per_tick{0};
+        double estimated_sample_ms{0.0};
+        double soft_budget_ms{4.0};
+        double hard_budget_ms{8.0};
+    };
+
+    struct SampledReadbackTickPlan
+    {
+        int next_cursor{0};
+        int samples_this_tick{0};
+        bool complete{false};
+        bool frame_budget_overrun{false};
+        bool hard_budget_overrun{false};
+        double budget_ms{0.0};
+    };
+
     struct PrecisionBrushInput
     {
         int texture_width{0};
@@ -496,6 +516,54 @@ namespace MecchaCamouflage::Core
         double brush_footprint_texels{0.0};
         bool clamped_by_game_min{false};
         std::string source{"not_run"};
+    };
+
+    struct SurfaceStretchSeed
+    {
+        double u{0.0};
+        double v{0.0};
+        double screen_x{0.0};
+        double screen_y{0.0};
+        double normal_x{0.0};
+        double normal_y{0.0};
+        double normal_z{1.0};
+        Color color{};
+        bool direct{true};
+        int radius{1};
+    };
+
+    struct SurfaceStretchPolicy
+    {
+        double max_uv_distance{0.015};
+        double max_screen_distance{48.0};
+        double min_normal_dot{0.72};
+        int max_inferred{0};
+    };
+
+    struct SurfaceStretchReport
+    {
+        std::vector<PaintSeed> inferred{};
+        int direct_preserved{0};
+        int rejected_seam{0};
+        int normal_limit{0};
+    };
+
+    struct SideCoverageInput
+    {
+        bool front_quality_success{false};
+        int side_samples{0};
+        int inferred_side_samples{0};
+        int min_side_samples{0};
+        bool budget_exhausted{false};
+    };
+
+    struct SideCoverageReport
+    {
+        bool front_quality_success{false};
+        bool side_quality_success{false};
+        bool side_quality_failed{false};
+        double inferred_ratio{0.0};
+        std::string failure{"not_evaluated"};
     };
 
     struct PaintRunDiagnostics
@@ -540,8 +608,12 @@ namespace MecchaCamouflage::Core
     auto build_runtime_atlas_from_masks(const AtlasBuildInput& input) -> AtlasBuildResult;
     auto choose_apply_backend(const RuntimeCapabilities& capabilities, bool dev_diagnostic_allowed) -> ApplyBackendProbe;
     auto plan_replicated_stroke_apply(const ReplicatedStrokePlanInput& input) -> ReplicatedStrokePlan;
+    auto plan_sampled_readback_tick(const SampledReadbackTickInput& input) -> SampledReadbackTickPlan;
     auto estimate_seed_radius_for_density(int texture_width, int texture_height, int seed_count) -> int;
     auto choose_precision_brush_radius(const PrecisionBrushInput& input) -> PrecisionBrushDecision;
+    auto infer_surface_stretch_seeds(const std::vector<SurfaceStretchSeed>& seeds,
+                                     const SurfaceStretchPolicy& policy) -> SurfaceStretchReport;
+    auto evaluate_side_coverage(const SideCoverageInput& input) -> SideCoverageReport;
     auto merge_nearby_paint_seeds(const std::vector<PaintSeed>& seeds,
                                   double brush_radius_uv) -> std::vector<PaintSeed>;
     auto is_floor_like_label(const std::string& label) -> bool;

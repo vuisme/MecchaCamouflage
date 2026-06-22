@@ -842,6 +842,37 @@ namespace MecchaCamouflage::Core
         return plan;
     }
 
+    auto plan_sampled_readback_tick(const SampledReadbackTickInput& input) -> SampledReadbackTickPlan
+    {
+        SampledReadbackTickPlan plan{};
+        const auto total = std::max(0, input.total_samples);
+        plan.next_cursor = clamp_int(input.cursor, 0, total);
+        if (total <= 0 || plan.next_cursor >= total)
+        {
+            plan.complete = true;
+            return plan;
+        }
+
+        const auto max_samples = input.max_samples_per_tick > 0 ? input.max_samples_per_tick : 64;
+        const auto sample_ms = std::max(0.0, input.estimated_sample_ms);
+        FrameBudget budget{input.soft_budget_ms, input.hard_budget_ms};
+        while (plan.next_cursor < total && plan.samples_this_tick < max_samples)
+        {
+            ++plan.next_cursor;
+            ++plan.samples_this_tick;
+            budget.consume(sample_ms);
+            if (budget.overrun || budget.hard_overrun)
+            {
+                break;
+            }
+        }
+        plan.complete = plan.next_cursor >= total;
+        plan.frame_budget_overrun = budget.overrun;
+        plan.hard_budget_overrun = budget.hard_overrun;
+        plan.budget_ms = budget.consumed_ms;
+        return plan;
+    }
+
     auto estimate_seed_radius_for_density(int texture_width, int texture_height, int seed_count) -> int
     {
         constexpr int MinRadius = 1;
@@ -882,6 +913,103 @@ namespace MecchaCamouflage::Core
         }
         out.brush_footprint_texels = out.radius * texture_edge;
         return out;
+    }
+
+    auto infer_surface_stretch_seeds(const std::vector<SurfaceStretchSeed>& seeds,
+                                     const SurfaceStretchPolicy& policy) -> SurfaceStretchReport
+    {
+        SurfaceStretchReport report{};
+        const auto max_inferred = policy.max_inferred > 0 ? policy.max_inferred : static_cast<int>(seeds.size());
+        const auto max_uv = std::max(0.0, policy.max_uv_distance);
+        const auto max_screen = std::max(0.0, policy.max_screen_distance);
+        const auto min_normal_dot = clamp(policy.min_normal_dot, -1.0, 1.0);
+
+        const auto normal_dot = [](const SurfaceStretchSeed& a, const SurfaceStretchSeed& b) {
+            const auto al = std::sqrt(a.normal_x * a.normal_x + a.normal_y * a.normal_y + a.normal_z * a.normal_z);
+            const auto bl = std::sqrt(b.normal_x * b.normal_x + b.normal_y * b.normal_y + b.normal_z * b.normal_z);
+            if (al <= 0.000001 || bl <= 0.000001)
+            {
+                return 1.0;
+            }
+            return (a.normal_x * b.normal_x + a.normal_y * b.normal_y + a.normal_z * b.normal_z) / (al * bl);
+        };
+
+        for (const auto& seed : seeds)
+        {
+            if (seed.direct)
+            {
+                ++report.direct_preserved;
+            }
+        }
+
+        for (std::size_t i = 0; i < seeds.size() && static_cast<int>(report.inferred.size()) < max_inferred; ++i)
+        {
+            if (!seeds[i].direct)
+            {
+                continue;
+            }
+            for (std::size_t j = i + 1; j < seeds.size() && static_cast<int>(report.inferred.size()) < max_inferred; ++j)
+            {
+                if (!seeds[j].direct)
+                {
+                    continue;
+                }
+                const auto du = seeds[i].u - seeds[j].u;
+                const auto dv = seeds[i].v - seeds[j].v;
+                const auto uv_distance = std::sqrt(du * du + dv * dv);
+                const auto dsx = seeds[i].screen_x - seeds[j].screen_x;
+                const auto dsy = seeds[i].screen_y - seeds[j].screen_y;
+                const auto screen_distance = std::sqrt(dsx * dsx + dsy * dsy);
+                if (uv_distance > max_uv || screen_distance > max_screen)
+                {
+                    ++report.rejected_seam;
+                    continue;
+                }
+                if (normal_dot(seeds[i], seeds[j]) < min_normal_dot)
+                {
+                    ++report.normal_limit;
+                    continue;
+                }
+
+                PaintSeed inferred{};
+                inferred.u = clamp((seeds[i].u + seeds[j].u) * 0.5, 0.0, 0.999999);
+                inferred.v = clamp((seeds[i].v + seeds[j].v) * 0.5, 0.0, 0.999999);
+                inferred.color.r = (seeds[i].color.r + seeds[j].color.r) * 0.5;
+                inferred.color.g = (seeds[i].color.g + seeds[j].color.g) * 0.5;
+                inferred.color.b = (seeds[i].color.b + seeds[j].color.b) * 0.5;
+                inferred.color.roughness = (seeds[i].color.roughness + seeds[j].color.roughness) * 0.5;
+                inferred.color.metallic = (seeds[i].color.metallic + seeds[j].color.metallic) * 0.5;
+                inferred.floor_like = false;
+                inferred.priority = -1;
+                inferred.radius = std::max(1, std::min(seeds[i].radius, seeds[j].radius));
+                inferred.weight = 0.5;
+                report.inferred.push_back(inferred);
+            }
+        }
+        return report;
+    }
+
+    auto evaluate_side_coverage(const SideCoverageInput& input) -> SideCoverageReport
+    {
+        SideCoverageReport report{};
+        report.front_quality_success = input.front_quality_success;
+        const auto side_samples = std::max(0, input.side_samples);
+        const auto inferred = std::max(0, std::min(input.inferred_side_samples, side_samples));
+        report.inferred_ratio = side_samples > 0
+                                    ? clamp(static_cast<double>(inferred) / static_cast<double>(side_samples), 0.0, 1.0)
+                                    : 0.0;
+        const auto min_side = std::max(0, input.min_side_samples);
+        if (side_samples < min_side)
+        {
+            report.side_quality_failed = true;
+            report.failure = input.budget_exhausted
+                                 ? "side_coverage_failed_budget_exhausted"
+                                 : "side_coverage_failed_low_samples";
+            return report;
+        }
+        report.side_quality_success = true;
+        report.failure = "ok";
+        return report;
     }
 
     auto merge_nearby_paint_seeds(const std::vector<PaintSeed>& seeds,

@@ -333,6 +333,19 @@ namespace
         double readback_ms{0.0};
     };
 
+    struct SampledSceneCapture
+    {
+        bool ok{false};
+        StringType failure{STR("not_run")};
+        Unreal::UObject* capture_actor{nullptr};
+        Unreal::UObject* capture_component{nullptr};
+        Unreal::UObject* render_target{nullptr};
+        CaptureGridDiagnostics diagnostics{};
+        int width{0};
+        int height{0};
+        double capture_ms{0.0};
+    };
+
     struct CalibrationStats
     {
         int samples{0};
@@ -5921,6 +5934,123 @@ namespace
         return Color{1.0, 0.0, 1.0, 1.0, 0.0};
     }
 
+    auto destroy_sampled_scene_capture(SampledSceneCapture& capture) -> void
+    {
+        if (capture.capture_actor)
+        {
+            call_no_params(capture.capture_actor, STR("K2_DestroyActor"));
+        }
+        capture.capture_actor = nullptr;
+        capture.capture_component = nullptr;
+        capture.render_target = nullptr;
+    }
+
+    auto begin_sampled_scene_capture(Unreal::UObject* pawn,
+                                     const Unreal::FVector& eye,
+                                     const Unreal::FVector& look_at,
+                                     int rt_width,
+                                     int rt_height,
+                                     bool hide_pawn,
+                                     ProbeState& state,
+                                     double fov_degrees,
+                                     const Unreal::FRotator* rotation_override = nullptr) -> SampledSceneCapture
+    {
+        SampledSceneCapture result{};
+        result.width = rt_width;
+        result.height = rt_height;
+        if (!pawn || rt_width <= 0 || rt_height <= 0 || state.cancelled)
+        {
+            result.failure = STR("sampled_capture_prereq_unavailable");
+            return result;
+        }
+        auto* world = pawn->GetWorld();
+        if (!world)
+        {
+            result.failure = STR("world_unavailable");
+            return result;
+        }
+        Unreal::UObject* target_mesh = nullptr;
+        if (hide_pawn)
+        {
+            if (auto* paint_component = find_runtime_paint_component_for(pawn))
+            {
+                target_mesh = find_target_mesh_for_runtime_paint(paint_component, pawn);
+            }
+        }
+        auto* scene_capture_class =
+            Unreal::UObjectGlobals::StaticFindObject<Unreal::UClass*>(nullptr, nullptr, STR("/Script/Engine.SceneCapture2D"));
+        result.diagnostics.scene_capture_class = scene_capture_class != nullptr;
+        if (!scene_capture_class)
+        {
+            result.failure = STR("scene_capture_class_unavailable");
+            return result;
+        }
+        result.render_target = create_render_target(pawn, rt_width, rt_height);
+        result.diagnostics.render_target = result.render_target != nullptr;
+        if (!result.render_target)
+        {
+            result.failure = STR("render_target_unavailable");
+            return result;
+        }
+
+        auto rotation = rotation_override ? *rotation_override : rotator_from_forward(sub(look_at, eye));
+        result.capture_actor = world->SpawnActor(scene_capture_class, &eye, &rotation);
+        result.diagnostics.capture_actor = result.capture_actor != nullptr;
+        if (!result.capture_actor)
+        {
+            result.failure = STR("capture_actor_spawn_failed");
+            return result;
+        }
+        result.capture_component = find_capture_component(result.capture_actor);
+        result.diagnostics.capture_component = result.capture_component != nullptr;
+        if (!result.capture_component)
+        {
+            destroy_sampled_scene_capture(result);
+            result.failure = STR("capture_component_unavailable");
+            return result;
+        }
+        result.diagnostics.actor_rotation_set_called =
+            call_rotator_bool_params(result.capture_actor, STR("K2_SetActorRotation"), rotation, {false});
+        result.diagnostics.component_rotation_set_called =
+            call_rotator_bool_params(result.capture_component, STR("K2_SetWorldRotation"), rotation, {false, false});
+        result.diagnostics.texture_target_written =
+            write_object_property_by_name(result.capture_component, STR("TextureTarget"), result.render_target);
+        write_number_property_by_name(result.capture_component, STR("FOVAngle"), clamp(fov_degrees, 10.0, 150.0));
+        result.diagnostics.capture_source_written =
+            write_number_property_by_name(result.capture_component, STR("CaptureSource"), SceneCaptureSourceFinalColorLdr);
+        result.diagnostics.capture_every_frame_written =
+            write_bool_property_by_name(result.capture_component, STR("bCaptureEveryFrame"), false);
+        result.diagnostics.capture_on_movement_written =
+            write_bool_property_by_name(result.capture_component, STR("bCaptureOnMovement"), false);
+        result.diagnostics.persist_rendering_state_written =
+            write_bool_property_by_name(result.capture_component, STR("bAlwaysPersistRenderingState"), true);
+        if (!result.diagnostics.texture_target_written)
+        {
+            destroy_sampled_scene_capture(result);
+            result.failure = STR("texture_target_write_failed");
+            return result;
+        }
+        configure_scene_capture_actor_filter(result.capture_component, pawn, hide_pawn, false, &result.diagnostics);
+        if (hide_pawn && target_mesh)
+        {
+            result.diagnostics.hide_target_component_called =
+                call_object_param(result.capture_component, STR("HideComponent"), target_mesh);
+        }
+
+        const auto capture_start = SteadyClock::now();
+        result.diagnostics.capture_scene_called = call_no_params(result.capture_component, STR("CaptureScene"));
+        result.capture_ms = elapsed_ms_since(capture_start);
+        if (!result.diagnostics.capture_scene_called)
+        {
+            destroy_sampled_scene_capture(result);
+            result.failure = STR("capture_scene_failed");
+            return result;
+        }
+        result.ok = true;
+        result.failure = STR("ok");
+        return result;
+    }
+
     auto capture_render_target_image(Unreal::UObject* pawn,
                                      const Unreal::FVector& eye,
                                      const Unreal::FVector& look_at,
@@ -7980,6 +8110,7 @@ namespace
             double sample_nx = 0.5;
             double sample_ny = 0.5;
             std::optional<Color> color{};
+            const auto hidden_pixels_available = hidden_image.ok && !hidden_image.pixels.empty();
             if (frame_projection.inside)
             {
                 nx = clamp(frame_projection.nx, 0.0, 0.999999);
@@ -7994,26 +8125,31 @@ namespace
                                                    capture_transform.offset_y,
                                                    capture_transform.flip_y,
                                                    capture_transform.pivot_y);
-                color = sample_image_at(hidden_image, sample_nx, sample_ny);
-                if (color)
+                if (hidden_pixels_available)
+                {
+                    color = sample_image_at(hidden_image, sample_nx, sample_ny);
+                    if (color)
+                    {
+                        ++stats.frame_projected_pixels;
+                        ++stats.projected_pixels;
+                    }
+                }
+                else
                 {
                     ++stats.frame_projected_pixels;
-                    ++stats.projected_pixels;
                 }
             }
             else
             {
                 ++stats.out_of_view;
+                sample_nx = -1.0;
+                sample_ny = -1.0;
             }
 
             const auto* nearest = nearest_direct_source(hit.world_position);
             if (!color && nearest)
             {
                 color = nearest->color;
-                nx = 0.5;
-                ny = 0.5;
-                sample_nx = 0.5;
-                sample_ny = 0.5;
                 ++stats.nearest_sources;
             }
             if (!color)
@@ -10289,6 +10425,28 @@ namespace
             RuntimeMaterialEvidenceProbe material_evidence{};
             ProjectedCaptureCoordStats alignment_stats{};
             std::vector<ScreenHitSample> apply_samples{};
+            SampledSceneCapture sampled_capture{};
+            ScreenTransform sampled_capture_transform{};
+            StringType capture_resolution_source{STR("not_run")};
+            std::vector<std::optional<Color>> sampled_readback_colors{};
+            int sampled_front_sample_count{0};
+            int sampled_readback_cursor{0};
+            int sampled_readback_success{0};
+            int sampled_readback_missing{0};
+            int sampled_readback_attempts{0};
+            int sampled_readback_ticks{0};
+            bool sampled_front_finalized{false};
+            bool sampled_readback_api_available{false};
+            RenderTargetReadDiagnostics sampled_readback_diagnostics{};
+            BrushQuerySideStats side_stats{};
+            int side_sample_count{0};
+            int side_inferred_samples{0};
+            bool side_quality_success{false};
+            bool side_quality_failed{false};
+            StringType side_quality_failure{STR("not_run")};
+            int stretch_inferred_strokes{0};
+            int stretch_rejected_seam{0};
+            int stretch_normal_limit{0};
             int vertical_band_hits{0};
             int vertical_band_count{0};
             int apply_cursor{0};
@@ -10566,6 +10724,7 @@ namespace
                 m_state.last_failure);
             write_last_status_file("job_done", target_resolve_ok);
             m_ui_play_running = false;
+            destroy_sampled_scene_capture(m_pipeline_job.sampled_capture);
             m_pipeline_job = PendingPipelineJob{};
         }
 
@@ -10593,14 +10752,14 @@ namespace
             m_state.paint_uv_success = 0;
             m_state.paint_world_success = 0;
             m_state.commit_calls = 0;
-            m_state.side_enabled = 0;
-            m_state.side_backend = STR("front_first_deferred");
+            m_state.side_enabled = 1;
+            m_state.side_backend = STR("screen_space_brush_query_replicated");
             m_state.side_budget_exhausted = 0;
             m_state.verified_paint_function = STR("PaintAtScreenPosition.body_mask");
             m_state.verified_paint_channel = PaintChannelAlbedoMetallicRoughness;
 
             RC::Output::send<RC::LogLevel::Warning>(
-                STR("{} play started id={} version={} route=f10_v2_runtime_atlas backend=tick_bounded_runtime_probe actual_model_paint=1 viewport_resolution_capture=1 capture_resolution_source=viewport_size_required scene_capture_color=0 trace_primary=1 capture_alignment=project_world_to_screen alignment_used=1 brush_radius_source=density_precision front_screen_paint=0 import_fallback=0 fallback_used=0 side_enabled=0 side_backend=front_first_deferred no_gui=1 no_umg_overlay=1 no_material_shader=1 no_clear=1 no_commit=1 no_mesh_hide=1 no_trace_color_fallback=1 legacy_splat_success=0 job_stage=started frame_budget_soft_ms=4 frame_budget_hard_ms=8 scheduler=v2_tick_state_machine atlas_source=runtime_probe atlas_probe_ok=0 apply_backend=unknown exact_material_source=unavailable material_confidence=unknown no_import=0 camera_state_restored=1 fresh_probe=1 cached_runtime_state_cleared=1\n"),
+                STR("{} play started id={} version={} route=f10_v2_runtime_atlas backend=tick_bounded_runtime_probe actual_model_paint=1 viewport_resolution_capture=1 capture_resolution_source=viewport_size_required scene_capture_color=0 trace_primary=1 capture_alignment=project_world_to_screen alignment_used=1 brush_radius_source=density_precision front_screen_paint=0 import_fallback=0 fallback_used=0 side_enabled=1 side_backend=screen_space_brush_query_replicated no_gui=1 no_umg_overlay=1 no_material_shader=1 no_clear=1 no_commit=1 no_mesh_hide=1 no_trace_color_fallback=1 legacy_splat_success=0 job_stage=started frame_budget_soft_ms=4 frame_budget_hard_ms=8 scheduler=v2_tick_state_machine atlas_source=runtime_probe atlas_probe_ok=0 apply_backend=unknown exact_material_source=unavailable material_confidence=unknown no_import=0 camera_state_restored=1 fresh_probe=1 cached_runtime_state_cleared=1\n"),
                 ModTag,
                 m_state.play_id,
                 ModVersion);
@@ -11259,6 +11418,77 @@ namespace
                     rt_height,
                     capture_sizing.scale);
 
+                m_pipeline_job.sampled_capture_transform = capture_transform;
+                m_pipeline_job.capture_resolution_source = RC::ensure_str(capture_sizing.reason.c_str());
+                m_pipeline_job.sampled_front_sample_count = static_cast<int>(m_pipeline_job.apply_samples.size());
+                m_pipeline_job.sampled_readback_cursor = 0;
+                m_pipeline_job.sampled_readback_success = 0;
+                m_pipeline_job.sampled_readback_missing = 0;
+                m_pipeline_job.sampled_readback_attempts = 0;
+                m_pipeline_job.sampled_readback_ticks = 0;
+                m_pipeline_job.sampled_front_finalized = false;
+                m_pipeline_job.sampled_readback_api_available = false;
+                m_pipeline_job.sampled_readback_diagnostics = RenderTargetReadDiagnostics{};
+                m_pipeline_job.sampled_readback_colors.assign(m_pipeline_job.apply_samples.size(), std::nullopt);
+                m_pipeline_job.sampled_capture = begin_sampled_scene_capture(m_pipeline_job.pawn,
+                                                                             m_pipeline_job.frame.eye,
+                                                                             look_at,
+                                                                             rt_width,
+                                                                             rt_height,
+                                                                             true,
+                                                                             m_state,
+                                                                             m_pipeline_job.frame.fov_degrees,
+                                                                             m_pipeline_job.frame.has_rotation
+                                                                                 ? &m_pipeline_job.frame.rotation
+                                                                                 : nullptr);
+                m_pipeline_job.timing.capture_scene_ms += m_pipeline_job.sampled_capture.capture_ms;
+                m_pipeline_job.timing.background_trace_ms += elapsed_ms_since(surface_stage_start);
+                if (!m_pipeline_job.sampled_capture.ok)
+                {
+                    m_state.failures = 1;
+                    m_state.success = 0;
+                    m_state.paint_uv_success = 0;
+                    m_state.verified_visible_backend = false;
+                    m_state.verified_paint_function = STR("replicated_paint.sampled_capture_refused");
+                    m_state.last_failure = m_pipeline_job.sampled_capture.failure.empty()
+                                               ? STR("sampled_capture_unavailable_no_apply")
+                                               : m_pipeline_job.sampled_capture.failure;
+                    RC::Output::send<RC::LogLevel::Warning>(
+                        STR("{} play replicated_paint refused reason={} failure={} no_apply=1 texture_import_used=0 import_backend=0 replicated_apply=0 fallback_used=0 legacy_splat_success=0 apply_backend={} capture_resolution_source={} readback_backend=sampled_pixel_tick sampled_readback_unavailable_no_apply=1 bulk_readback_used=0 phase_ms=({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}) frame_budget_overrun=0 camera_state_restored={} job_stage=surface_trace_sampling\n"),
+                        ModTag,
+                        m_pipeline_job.reason.empty() ? STR("<none>") : m_pipeline_job.reason,
+                        m_state.last_failure,
+                        apply_backend_label(m_pipeline_job.apply_backend.backend),
+                        m_pipeline_job.capture_resolution_source,
+                        m_pipeline_job.timing.resolve_ms,
+                        m_pipeline_job.timing.coarse_hit_ms,
+                        m_pipeline_job.timing.refined_hit_ms,
+                        m_pipeline_job.timing.background_trace_ms,
+                        m_pipeline_job.timing.capture_scene_ms,
+                        m_pipeline_job.timing.bulk_readback_ms,
+                        m_pipeline_job.timing.calibration_ms,
+                        m_pipeline_job.timing.side_query_ms,
+                        m_pipeline_job.timing.assembly_ms,
+                        m_pipeline_job.timing.import_ms,
+                        m_pipeline_job.timing.verify_ms,
+                        m_pipeline_job.camera_state_restored ? 1 : 0);
+                    finish_pipeline_job();
+                    return;
+                }
+                RC::Output::send<RC::LogLevel::Warning>(
+                    STR("{} sampled_capture_started capture_resolution_source={} viewport={}x{} rt_size={}x{} capture_ms={} readback_backend=sampled_pixel_tick sampled_readback_cursor=0 sampled_readback_total={} sampled_readback_phase_ms=0 bulk_readback_used=0 job_stage=surface_trace_sampling color_source=hidden_character_capture side_enabled=1 side_backend=screen_space_brush_query_replicated\n"),
+                    ModTag,
+                    m_pipeline_job.capture_resolution_source,
+                    m_pipeline_job.viewport.width,
+                    m_pipeline_job.viewport.height,
+                    m_pipeline_job.sampled_capture.width,
+                    m_pipeline_job.sampled_capture.height,
+                    m_pipeline_job.sampled_capture.capture_ms,
+                    m_pipeline_job.sampled_readback_colors.size());
+                m_pipeline_job.stage = UiPipelineStage::SceneCaptureSupplement;
+                m_pipeline_job.stage_start = SteadyClock::now();
+                return;
+
                 const auto hidden_capture_start = SteadyClock::now();
                 auto hidden_capture = capture_render_target_image(m_pipeline_job.pawn,
                                                                   m_pipeline_job.frame.eye,
@@ -11668,6 +11898,645 @@ namespace
                 return;
             }
 
+            if (m_pipeline_job.stage == UiPipelineStage::SceneCaptureSupplement)
+            {
+                const auto readback_tick_start = SteadyClock::now();
+                MecchaCamouflage::Core::FrameBudget budget{4.0, 8.0};
+                int attempted_this_tick = 0;
+                int success_this_tick = 0;
+                int missing_this_tick = 0;
+                constexpr int MaxPixelReadsPerTick = 256;
+                while (m_pipeline_job.sampled_readback_cursor <
+                           static_cast<int>(m_pipeline_job.sampled_readback_colors.size()) &&
+                       attempted_this_tick < MaxPixelReadsPerTick)
+                {
+                    const auto index = static_cast<size_t>(m_pipeline_job.sampled_readback_cursor);
+                    if (m_pipeline_job.sampled_readback_colors[index])
+                    {
+                        ++m_pipeline_job.sampled_readback_cursor;
+                        continue;
+                    }
+                    const auto& sample = m_pipeline_job.apply_samples[index];
+                    const auto has_projected_capture =
+                        sample.capture_nx >= 0.0 && sample.capture_nx <= 1.0 &&
+                        sample.capture_ny >= 0.0 && sample.capture_ny <= 1.0;
+                    if (!has_projected_capture)
+                    {
+                        m_pipeline_job.sampled_readback_colors[index] = sample.color;
+                        ++m_pipeline_job.sampled_readback_cursor;
+                        continue;
+                    }
+
+                    const auto pixel_start = SteadyClock::now();
+                    const auto pixel = screen_pixel_for_sample(sample,
+                                                               m_pipeline_job.sampled_capture.width,
+                                                               m_pipeline_job.sampled_capture.height,
+                                                               m_pipeline_job.sampled_capture_transform);
+                    auto color = read_render_target_pixel(m_pipeline_job.pawn,
+                                                          m_pipeline_job.sampled_capture.render_target,
+                                                          pixel.first,
+                                                          pixel.second,
+                                                          &m_pipeline_job.sampled_readback_diagnostics);
+                    ++attempted_this_tick;
+                    ++m_pipeline_job.sampled_readback_attempts;
+                    if (color)
+                    {
+                        m_pipeline_job.sampled_readback_api_available = true;
+                        auto resolved = infer_surface_material(*color, sample.floor_like);
+                        resolved.r = clamp(resolved.r, 0.01, 0.99);
+                        resolved.g = clamp(resolved.g, 0.01, 0.99);
+                        resolved.b = clamp(resolved.b, 0.01, 0.99);
+                        m_pipeline_job.sampled_readback_colors[index] = resolved;
+                        ++success_this_tick;
+                        ++m_pipeline_job.sampled_readback_success;
+                    }
+                    else
+                    {
+                        ++missing_this_tick;
+                        ++m_pipeline_job.sampled_readback_missing;
+                    }
+                    ++m_pipeline_job.sampled_readback_cursor;
+                    if (budget.consume(elapsed_ms_since(pixel_start)))
+                    {
+                        break;
+                    }
+                }
+                ++m_pipeline_job.sampled_readback_ticks;
+                m_pipeline_job.frame_budget_overrun = m_pipeline_job.frame_budget_overrun || budget.overrun;
+                m_pipeline_job.timing.bulk_readback_ms += elapsed_ms_since(readback_tick_start);
+                RC::Output::send<RC::LogLevel::Warning>(
+                    STR("{} sampled_readback_tick readback_backend=sampled_pixel_tick bulk_readback_used=0 sampled_readback_cursor={}/{} sampled_readback_phase_ms={} attempted={} success={} missing={} total_success={} total_missing={} raw_attempts={} raw_success={} pixel_attempts={} pixel_success={} frame_budget_overrun={} hard_budget_overrun={} budget_ms={} job_stage=scene_capture_supplement\n"),
+                    ModTag,
+                    m_pipeline_job.sampled_readback_cursor,
+                    m_pipeline_job.sampled_readback_colors.size(),
+                    elapsed_ms_since(readback_tick_start),
+                    attempted_this_tick,
+                    success_this_tick,
+                    missing_this_tick,
+                    m_pipeline_job.sampled_readback_success,
+                    m_pipeline_job.sampled_readback_missing,
+                    m_pipeline_job.sampled_readback_diagnostics.raw_attempts,
+                    m_pipeline_job.sampled_readback_diagnostics.raw_success,
+                    m_pipeline_job.sampled_readback_diagnostics.pixel_attempts,
+                    m_pipeline_job.sampled_readback_diagnostics.pixel_success,
+                    budget.overrun ? 1 : 0,
+                    budget.hard_overrun ? 1 : 0,
+                    budget.consumed_ms);
+                if (m_pipeline_job.sampled_readback_cursor <
+                    static_cast<int>(m_pipeline_job.sampled_readback_colors.size()))
+                {
+                    return;
+                }
+                if (!m_pipeline_job.sampled_readback_api_available)
+                {
+                    m_state.failures = 1;
+                    m_state.success = 0;
+                    m_state.paint_uv_success = 0;
+                    m_state.verified_visible_backend = false;
+                    m_state.verified_paint_function = STR("replicated_paint.sampled_readback_refused");
+                    m_state.last_failure = STR("sampled_readback_unavailable_no_apply");
+                    RC::Output::send<RC::LogLevel::Warning>(
+                        STR("{} play replicated_paint refused reason={} failure={} no_apply=1 texture_import_used=0 import_backend=0 replicated_apply=0 fallback_used=0 legacy_splat_success=0 readback_backend=sampled_pixel_tick sampled_readback_unavailable_no_apply=1 bulk_readback_used=0 sampled_readback_cursor={}/{} sampled_readback_phase_ms={} phase_ms=({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}) frame_budget_overrun={} camera_state_restored={} job_stage=scene_capture_supplement\n"),
+                        ModTag,
+                        m_pipeline_job.reason.empty() ? STR("<none>") : m_pipeline_job.reason,
+                        m_state.last_failure,
+                        m_pipeline_job.sampled_readback_cursor,
+                        m_pipeline_job.sampled_readback_colors.size(),
+                        elapsed_ms_since(readback_tick_start),
+                        m_pipeline_job.timing.resolve_ms,
+                        m_pipeline_job.timing.coarse_hit_ms,
+                        m_pipeline_job.timing.refined_hit_ms,
+                        m_pipeline_job.timing.background_trace_ms,
+                        m_pipeline_job.timing.capture_scene_ms,
+                        m_pipeline_job.timing.bulk_readback_ms,
+                        m_pipeline_job.timing.calibration_ms,
+                        m_pipeline_job.timing.side_query_ms,
+                        m_pipeline_job.timing.assembly_ms,
+                        m_pipeline_job.timing.import_ms,
+                        m_pipeline_job.timing.verify_ms,
+                        m_pipeline_job.frame_budget_overrun ? 1 : 0,
+                        m_pipeline_job.camera_state_restored ? 1 : 0);
+                    finish_pipeline_job();
+                    return;
+                }
+
+                auto build_captured_samples = [&](int begin, int end, int& used, int& missing) {
+                    std::vector<ScreenHitSample> out{};
+                    const auto clamped_begin = std::max(0, begin);
+                    const auto clamped_end = std::min(end, static_cast<int>(m_pipeline_job.apply_samples.size()));
+                    out.reserve(static_cast<size_t>(std::max(0, clamped_end - clamped_begin)));
+                    for (int i = clamped_begin; i < clamped_end; ++i)
+                    {
+                        const auto index = static_cast<size_t>(i);
+                        if (index >= m_pipeline_job.sampled_readback_colors.size() ||
+                            !m_pipeline_job.sampled_readback_colors[index])
+                        {
+                            ++missing;
+                            continue;
+                        }
+                        auto sample = m_pipeline_job.apply_samples[index];
+                        auto color = *m_pipeline_job.sampled_readback_colors[index];
+                        if (!std::isfinite(color.r) || !std::isfinite(color.g) || !std::isfinite(color.b))
+                        {
+                            ++missing;
+                            continue;
+                        }
+                        color.r = clamp(color.r, 0.01, 0.99);
+                        color.g = clamp(color.g, 0.01, 0.99);
+                        color.b = clamp(color.b, 0.01, 0.99);
+                        sample.color = color;
+                        out.push_back(sample);
+                        ++used;
+                    }
+                    return out;
+                };
+
+                if (!m_pipeline_job.sampled_front_finalized)
+                {
+                    int front_color_used = 0;
+                    int front_missing_color = 0;
+                    auto front_samples = build_captured_samples(0,
+                                                                 m_pipeline_job.sampled_front_sample_count,
+                                                                 front_color_used,
+                                                                 front_missing_color);
+                    std::vector<std::optional<Color>> front_colors{};
+                    front_colors.reserve(static_cast<size_t>(m_pipeline_job.sampled_front_sample_count));
+                    for (int i = 0; i < m_pipeline_job.sampled_front_sample_count; ++i)
+                    {
+                        const auto index = static_cast<size_t>(i);
+                        front_colors.push_back(index < m_pipeline_job.sampled_readback_colors.size()
+                                                   ? m_pipeline_job.sampled_readback_colors[index]
+                                                   : std::optional<Color>{});
+                    }
+                    const auto color_summary = summarize_capture_colors(front_colors);
+                    const auto color_quality = summarize_capture_quality(front_colors);
+                    const auto capture_rgb_max = std::max({color_summary.max_r, color_summary.max_g, color_summary.max_b});
+                    const auto quality_decision = MecchaCamouflage::Core::validate_capture_quality(MecchaCamouflage::Core::CaptureQualityInput{
+                        true,
+                        true,
+                        color_summary.pixels,
+                        front_color_used,
+                        m_pipeline_job.min_paint_hits,
+                        color_summary.uniform,
+                        color_summary.clear_suspect,
+                        0.0,
+                        0.0,
+                        0.0,
+                        capture_rgb_max,
+                        color_quality.rgb_range,
+                        color_quality.luma_range});
+                    const auto low_luma_suspect =
+                        capture_rgb_max < MecchaCamouflage::Core::MinCaptureRgbMax ||
+                        (color_quality.rgb_range < MecchaCamouflage::Core::MinCaptureRgbRange &&
+                         color_quality.luma_range < MecchaCamouflage::Core::MinCaptureLumaRange);
+                    RC::Output::send<RC::LogLevel::Warning>(
+                        STR("{} hidden_background_capture color_source=hidden_character_capture image_ok=1 image_failure=<none> bulk_calibration_ok=1 bulk_backend=disabled_sampled_pixel_tick bulk_pairs=0 bulk_best_median=0 bulk_runner_up_median=0 capture_color_used={} missing_color={} background_pixels={} min_pixels={} uniform={} clear_suspect={} near_uniform={} low_luma_suspect={} chroma_validation_failed=0 rgb_min=({}, {}, {}) rgb_avg=({}, {}, {}) rgb_max=({}, {}, {}) color_score={} avg_chroma={} luma_range={} rgb_range={} capture_ms={} readback_ms={} total_ms={} readback_backend_cached=0 readback_backend=sampled_pixel_tick bulk_readback_used=0 sampled_readback_cursor={}/{} sampled_readback_phase_ms={} no_trace_color_fallback=1 fallback_used=0 texture_import_used=0 job_stage=scene_capture_supplement\n"),
+                        ModTag,
+                        front_color_used,
+                        front_missing_color,
+                        color_summary.pixels,
+                        m_pipeline_job.min_paint_hits,
+                        color_summary.uniform ? 1 : 0,
+                        color_summary.clear_suspect ? 1 : 0,
+                        color_summary.near_uniform_samples,
+                        low_luma_suspect ? 1 : 0,
+                        color_summary.min_r,
+                        color_summary.min_g,
+                        color_summary.min_b,
+                        color_summary.avg_r,
+                        color_summary.avg_g,
+                        color_summary.avg_b,
+                        color_summary.max_r,
+                        color_summary.max_g,
+                        color_summary.max_b,
+                        color_quality.score,
+                        color_quality.avg_chroma,
+                        color_quality.luma_range,
+                        color_quality.rgb_range,
+                        m_pipeline_job.sampled_capture.capture_ms,
+                        m_pipeline_job.timing.bulk_readback_ms,
+                        elapsed_ms_since(m_pipeline_job.stage_start),
+                        m_pipeline_job.sampled_readback_cursor,
+                        m_pipeline_job.sampled_readback_colors.size(),
+                        elapsed_ms_since(readback_tick_start));
+                    if (!quality_decision.ok || front_samples.empty())
+                    {
+                        m_state.failures = 1;
+                        m_state.success = 0;
+                        m_state.paint_uv_success = 0;
+                        m_state.verified_visible_backend = false;
+                        m_state.verified_paint_function = STR("replicated_paint.hidden_capture_refused");
+                        m_state.last_failure = front_samples.empty()
+                                                   ? STR("hidden_background_capture_empty_no_apply")
+                                                   : RC::ensure_str(quality_decision.failure.c_str());
+                        RC::Output::send<RC::LogLevel::Warning>(
+                            STR("{} play replicated_paint refused reason={} failure={} no_apply=1 texture_import_used=0 import_backend=0 replicated_apply=0 fallback_used=0 legacy_splat_success=0 apply_backend={} atlas_source={} atlas_probe_ok={} exact_material_source=unavailable material_confidence=unknown material_source=hidden_character_capture_rgb_estimated color_source=hidden_character_capture readback_backend=sampled_pixel_tick bulk_readback_used=0 sampled_readback_cursor={}/{} phase_ms=({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}) frame_budget_overrun={} camera_state_restored={} job_stage=scene_capture_supplement\n"),
+                            ModTag,
+                            m_pipeline_job.reason.empty() ? STR("<none>") : m_pipeline_job.reason,
+                            m_state.last_failure,
+                            apply_backend_label(m_pipeline_job.apply_backend.backend),
+                            RC::ensure_str(m_pipeline_job.atlas_probe.source.c_str()),
+                            m_pipeline_job.atlas_probe.ok ? 1 : 0,
+                            m_pipeline_job.sampled_readback_cursor,
+                            m_pipeline_job.sampled_readback_colors.size(),
+                            m_pipeline_job.timing.resolve_ms,
+                            m_pipeline_job.timing.coarse_hit_ms,
+                            m_pipeline_job.timing.refined_hit_ms,
+                            m_pipeline_job.timing.background_trace_ms,
+                            m_pipeline_job.timing.capture_scene_ms,
+                            m_pipeline_job.timing.bulk_readback_ms,
+                            m_pipeline_job.timing.calibration_ms,
+                            m_pipeline_job.timing.side_query_ms,
+                            m_pipeline_job.timing.assembly_ms,
+                            m_pipeline_job.timing.import_ms,
+                            m_pipeline_job.timing.verify_ms,
+                            m_pipeline_job.frame_budget_overrun ? 1 : 0,
+                            m_pipeline_job.camera_state_restored ? 1 : 0);
+                        finish_pipeline_job();
+                        return;
+                    }
+
+                    std::vector<ResolvedSurfaceSeed> direct_seeds{};
+                    direct_seeds.reserve(front_samples.size());
+                    for (const auto& sample : front_samples)
+                    {
+                        direct_seeds.push_back(ResolvedSurfaceSeed{
+                            sample.u,
+                            sample.v,
+                            sample.color,
+                            sample.floor_like,
+                            sample.world_position,
+                            sample.normal});
+                    }
+                    RenderTargetImage sampled_hidden_image{};
+                    sampled_hidden_image.ok = true;
+                    sampled_hidden_image.width = m_pipeline_job.sampled_capture.width;
+                    sampled_hidden_image.height = m_pipeline_job.sampled_capture.height;
+                    const auto side_start = SteadyClock::now();
+                    auto side_samples = collect_brush_query_side_samples(m_pipeline_job.component,
+                                                                         m_pipeline_job.pawn,
+                                                                         m_pipeline_job.mesh,
+                                                                         m_pipeline_job.controller,
+                                                                         m_pipeline_job.viewport,
+                                                                         m_pipeline_job.frame,
+                                                                         sampled_hidden_image,
+                                                                         m_pipeline_job.sampled_capture_transform,
+                                                                         direct_seeds,
+                                                                         m_state,
+                                                                         m_pipeline_job.side_stats);
+                    m_pipeline_job.timing.side_query_ms += elapsed_ms_since(side_start);
+                    m_pipeline_job.side_sample_count = static_cast<int>(side_samples.size());
+                    m_pipeline_job.side_inferred_samples = 0;
+                    for (const auto& sample : side_samples)
+                    {
+                        const auto projected =
+                            sample.capture_nx >= 0.0 && sample.capture_nx <= 1.0 &&
+                            sample.capture_ny >= 0.0 && sample.capture_ny <= 1.0;
+                        m_pipeline_job.apply_samples.push_back(sample);
+                        if (projected)
+                        {
+                            m_pipeline_job.sampled_readback_colors.push_back(std::nullopt);
+                        }
+                        else
+                        {
+                            m_pipeline_job.sampled_readback_colors.push_back(sample.color);
+                            ++m_pipeline_job.side_inferred_samples;
+                        }
+                    }
+                    const auto side_quality = MecchaCamouflage::Core::evaluate_side_coverage(MecchaCamouflage::Core::SideCoverageInput{
+                        m_pipeline_job.front_coverage_ok,
+                        m_pipeline_job.side_sample_count,
+                        m_pipeline_job.side_stats.nearest_sources,
+                        std::max(128, m_pipeline_job.min_paint_hits / 8),
+                        m_pipeline_job.side_stats.budget_exhausted});
+                    m_pipeline_job.side_quality_success = side_quality.side_quality_success;
+                    m_pipeline_job.side_quality_failed = side_quality.side_quality_failed;
+                    m_pipeline_job.side_quality_failure = RC::ensure_str(side_quality.failure.c_str());
+                    m_state.side_enabled = 1;
+                    m_state.side_backend = STR("screen_space_brush_query_replicated");
+                    m_state.side_query_attempts = m_pipeline_job.side_stats.attempts;
+                    m_state.side_query_success = m_pipeline_job.side_stats.success;
+                    m_state.side_query_uv_hits = m_pipeline_job.side_stats.uv_hits;
+                    m_state.side_projected_pixels = m_pipeline_job.side_stats.projected_pixels;
+                    m_state.side_material_hits = m_pipeline_job.side_stats.material_hits;
+                    m_state.side_seeds = m_pipeline_job.side_sample_count;
+                    m_state.side_nearest_sources = m_pipeline_job.side_stats.nearest_sources;
+                    m_state.side_duplicate_texels = m_pipeline_job.side_stats.duplicate_texels;
+                    m_state.side_normal_suspect = m_pipeline_job.side_stats.normal_suspect;
+                    m_state.side_budget_exhausted = m_pipeline_job.side_stats.budget_exhausted ? 1 : 0;
+                    m_pipeline_job.sampled_front_finalized = true;
+                    RC::Output::send<RC::LogLevel::Warning>(
+                        STR("{} side screen_space_brush_query_replicated side_enabled=1 side_backend=screen_space_brush_query_replicated attempts={} success={} owner_hits={} uv_hits={} projected_pixels={} frame_projected_pixels={} nearest_sources={} seeds={} duplicate_texels={} normal_suspect={} out_of_view={} no_color={} t_side_ms={} budget_exhausted={} side_quality_success={} side_quality_failed={} side_quality_failure={} inferred_ratio={} readback_backend=sampled_pixel_tick bulk_readback_used=0 job_stage=side_query first_failure={}\n"),
+                        ModTag,
+                        m_pipeline_job.side_stats.attempts,
+                        m_pipeline_job.side_stats.success,
+                        m_pipeline_job.side_stats.owner_hits,
+                        m_pipeline_job.side_stats.uv_hits,
+                        m_pipeline_job.side_stats.projected_pixels,
+                        m_pipeline_job.side_stats.frame_projected_pixels,
+                        m_pipeline_job.side_stats.nearest_sources,
+                        m_pipeline_job.side_stats.seeds,
+                        m_pipeline_job.side_stats.duplicate_texels,
+                        m_pipeline_job.side_stats.normal_suspect,
+                        m_pipeline_job.side_stats.out_of_view,
+                        m_pipeline_job.side_stats.no_color,
+                        m_pipeline_job.timing.side_query_ms,
+                        m_pipeline_job.side_stats.budget_exhausted ? 1 : 0,
+                        m_pipeline_job.side_quality_success ? 1 : 0,
+                        m_pipeline_job.side_quality_failed ? 1 : 0,
+                        m_pipeline_job.side_quality_failure,
+                        side_quality.inferred_ratio,
+                        m_pipeline_job.side_stats.first_failure.empty() ? STR("<none>") : m_pipeline_job.side_stats.first_failure);
+                    if (m_pipeline_job.sampled_readback_cursor <
+                        static_cast<int>(m_pipeline_job.sampled_readback_colors.size()))
+                    {
+                        return;
+                    }
+                }
+
+                int capture_color_used = 0;
+                int missing_color = 0;
+                auto captured_samples = build_captured_samples(0,
+                                                               static_cast<int>(m_pipeline_job.apply_samples.size()),
+                                                               capture_color_used,
+                                                               missing_color);
+                m_pipeline_job.material_evidence = probe_runtime_material_evidence(m_pipeline_job.component);
+                m_pipeline_job.include_material_channels = m_pipeline_job.material_evidence.send_material_channels;
+                m_pipeline_job.material_channels_sent = m_pipeline_job.include_material_channels ? 2 : 0;
+                if (m_pipeline_job.include_material_channels)
+                {
+                    for (auto& sample : captured_samples)
+                    {
+                        sample.color.roughness = m_pipeline_job.material_evidence.roughness;
+                        sample.color.metallic = m_pipeline_job.material_evidence.metallic;
+                    }
+                }
+                RC::Output::send<RC::LogLevel::Warning>(
+                    STR("{} material_evidence_probe=1 CurrentBrushSettings={} BrushMetallicAndRoughness={} DynamicMaterialInstance={} RoughnessParameterName={} MetallicParameterName={} GetDominantPaintMaterialPatterns={} has_roughness_scalar={} has_metallic_scalar={} roughness={} metallic={} material_channels_sent={} albedo_only={} material_confidence={} material_source={} exact_material_source=unavailable job_stage=scene_capture_supplement\n"),
+                    ModTag,
+                    m_pipeline_job.material_evidence.current_brush_settings_available ? 1 : 0,
+                    m_pipeline_job.material_evidence.brush_metallic_and_roughness_available ? 1 : 0,
+                    m_pipeline_job.material_evidence.dynamic_material_instance_available ? 1 : 0,
+                    m_pipeline_job.material_evidence.roughness_parameter_name_available ? 1 : 0,
+                    m_pipeline_job.material_evidence.metallic_parameter_name_available ? 1 : 0,
+                    m_pipeline_job.material_evidence.dominant_material_patterns_available ? 1 : 0,
+                    m_pipeline_job.material_evidence.has_roughness_scalar ? 1 : 0,
+                    m_pipeline_job.material_evidence.has_metallic_scalar ? 1 : 0,
+                    m_pipeline_job.material_evidence.roughness,
+                    m_pipeline_job.material_evidence.metallic,
+                    m_pipeline_job.material_channels_sent,
+                    m_pipeline_job.include_material_channels ? 0 : 1,
+                    material_confidence_label(m_pipeline_job.material_evidence.confidence),
+                    m_pipeline_job.material_evidence.source);
+
+                m_pipeline_job.brush =
+                    resolve_runtime_paint_brush_settings(m_pipeline_job.component,
+                                                         static_cast<int>(captured_samples.size()));
+
+                std::unordered_set<std::int64_t> direct_cells{};
+                const auto stretch_cell_size = std::max(0.000001, m_pipeline_job.brush.radius);
+                const auto stretch_key_for = [&](double u, double v) -> std::int64_t {
+                    const auto ux = static_cast<std::int64_t>(std::floor(clamp(u, 0.0, 0.999999) / stretch_cell_size));
+                    const auto vy = static_cast<std::int64_t>(std::floor(clamp(v, 0.0, 0.999999) / stretch_cell_size));
+                    return (ux << 32) ^ (vy & 0xffffffffLL);
+                };
+                direct_cells.reserve(captured_samples.size());
+                for (const auto& sample : captured_samples)
+                {
+                    direct_cells.insert(stretch_key_for(sample.u, sample.v));
+                }
+                const auto front_limit = std::min(m_pipeline_job.sampled_front_sample_count,
+                                                  static_cast<int>(captured_samples.size()));
+                const auto max_stretch = std::min(4096, std::max(0, front_limit / 4));
+                for (int i = 1; i < front_limit && m_pipeline_job.stretch_inferred_strokes < max_stretch; ++i)
+                {
+                    const auto& a = captured_samples[static_cast<size_t>(i - 1)];
+                    const auto& b = captured_samples[static_cast<size_t>(i)];
+                    const auto du = a.u - b.u;
+                    const auto dv = a.v - b.v;
+                    const auto uv_distance = std::sqrt(du * du + dv * dv);
+                    const auto dsx = a.screen_x - b.screen_x;
+                    const auto dsy = a.screen_y - b.screen_y;
+                    const auto screen_distance = std::sqrt(dsx * dsx + dsy * dsy);
+                    const auto normal_dot = length(a.normal) > 0.01 && length(b.normal) > 0.01
+                                                ? dot(normalize(a.normal), normalize(b.normal))
+                                                : 1.0;
+                    if (uv_distance > std::max(m_pipeline_job.brush.radius * 5.0, 0.018) ||
+                        screen_distance > 64.0)
+                    {
+                        ++m_pipeline_job.stretch_rejected_seam;
+                        continue;
+                    }
+                    if (normal_dot < 0.64)
+                    {
+                        ++m_pipeline_job.stretch_normal_limit;
+                        continue;
+                    }
+                    const auto mid_u = clamp((a.u + b.u) * 0.5, 0.0, 0.999999);
+                    const auto mid_v = clamp((a.v + b.v) * 0.5, 0.0, 0.999999);
+                    const auto key = stretch_key_for(mid_u, mid_v);
+                    if (direct_cells.find(key) != direct_cells.end())
+                    {
+                        continue;
+                    }
+                    ScreenHitSample inferred{};
+                    inferred.screen_x = (a.screen_x + b.screen_x) * 0.5;
+                    inferred.screen_y = (a.screen_y + b.screen_y) * 0.5;
+                    inferred.nx = (a.nx + b.nx) * 0.5;
+                    inferred.ny = (a.ny + b.ny) * 0.5;
+                    inferred.capture_nx = -1.0;
+                    inferred.capture_ny = -1.0;
+                    inferred.u = mid_u;
+                    inferred.v = mid_v;
+                    inferred.world_position = mul(add(a.world_position, b.world_position), 0.5);
+                    inferred.normal = normalize(add(a.normal, b.normal));
+                    inferred.color.r = (a.color.r + b.color.r) * 0.5;
+                    inferred.color.g = (a.color.g + b.color.g) * 0.5;
+                    inferred.color.b = (a.color.b + b.color.b) * 0.5;
+                    inferred.color.roughness = (a.color.roughness + b.color.roughness) * 0.5;
+                    inferred.color.metallic = (a.color.metallic + b.color.metallic) * 0.5;
+                    inferred.floor_like = a.floor_like && b.floor_like;
+                    captured_samples.push_back(inferred);
+                    direct_cells.insert(key);
+                    ++m_pipeline_job.stretch_inferred_strokes;
+                }
+
+                m_pipeline_job.strokes_before_merge = static_cast<int>(captured_samples.size());
+                m_pipeline_job.apply_samples =
+                    merge_precision_stroke_samples(captured_samples,
+                                                   m_pipeline_job.brush.radius,
+                                                   m_pipeline_job.duplicate_merged_strokes);
+                m_pipeline_job.surface_evidence.scene_capture_samples = capture_color_used;
+                m_pipeline_job.surface_evidence.accepted_samples = capture_color_used;
+                m_pipeline_job.surface_evidence.material_resolved_samples =
+                    m_pipeline_job.include_material_channels ? static_cast<int>(m_pipeline_job.apply_samples.size()) : 0;
+                m_pipeline_job.surface_evidence.rejected_samples = missing_color;
+                const auto max_replicated_strokes_per_tick =
+                    read_int_property_by_name(m_pipeline_job.component, STR("MaxReplicatedPaintStrokesPerTick")).value_or(24);
+                const auto replicated_quality_min =
+                    m_pipeline_job.front_coverage_ok
+                        ? m_pipeline_job.min_paint_hits
+                        : std::max(m_pipeline_job.min_paint_hits,
+                                   static_cast<int>(m_pipeline_job.apply_samples.size()) + 1);
+                m_pipeline_job.stroke_plan =
+                    MecchaCamouflage::Core::plan_replicated_stroke_apply(MecchaCamouflage::Core::ReplicatedStrokePlanInput{
+                        static_cast<int>(m_pipeline_job.apply_samples.size()),
+                        replicated_quality_min,
+                        max_replicated_strokes_per_tick,
+                        DiagnosticsEnabled,
+                        m_pipeline_job.apply_backend.ok});
+                RC::Output::send<RC::LogLevel::Warning>(
+                    STR("{} front_coverage_apply_gate front_coverage_ok={} front_coverage_failed={} coverage_failure={} refined_reaches_coarse_bottom={} refined_grid_complete={} vertical_band_hits={}/{} refined_grid_cursor={} refined_total_cells={} replicated_quality_min={} apply_samples={} replicated_partial={} quality_success={} no_apply={} side_enabled=1 side_backend=screen_space_brush_query_replicated side_quality_success={} side_quality_failed={} side_quality_failure={} job_stage=scene_capture_supplement\n"),
+                    ModTag,
+                    m_pipeline_job.front_coverage_ok ? 1 : 0,
+                    m_pipeline_job.front_coverage_failed ? 1 : 0,
+                    RC::ensure_str(m_pipeline_job.front_coverage.failure.c_str()),
+                    m_pipeline_job.front_coverage.reaches_coarse_bottom ? 1 : 0,
+                    m_pipeline_job.front_coverage.refined_grid_complete ? 1 : 0,
+                    m_pipeline_job.vertical_band_hits,
+                    m_pipeline_job.vertical_band_count,
+                    m_pipeline_job.refine_cursor,
+                    m_pipeline_job.refine_total_cells,
+                    replicated_quality_min,
+                    m_pipeline_job.apply_samples.size(),
+                    m_pipeline_job.stroke_plan.partial ? 1 : 0,
+                    m_pipeline_job.stroke_plan.quality_success ? 1 : 0,
+                    m_pipeline_job.stroke_plan.ok ? 0 : 1,
+                    m_pipeline_job.side_quality_success ? 1 : 0,
+                    m_pipeline_job.side_quality_failed ? 1 : 0,
+                    m_pipeline_job.side_quality_failure);
+                RC::Output::send<RC::LogLevel::Warning>(
+                    STR("{} quality_policy capture_alignment=project_world_to_screen alignment_used=1 projected_delta_avg_px={} projected_delta_p95_px={} projected_delta_max_px={} alignment_fallback_samples={} capture_resolution_source={} readback_backend=sampled_pixel_tick bulk_readback_used=0 brush_radius_source={} requested_brush_radius={} brush_radius={} texture_min_radius={} brush_radius_clamped_by_game_min={} brush_footprint_texels={} strokes_before_merge={} duplicate_merged_strokes={} stretch_inferred_strokes={} stretch_rejected_seam={} stretch_normal_limit={} material_evidence_probe=1 material_channels_sent={} albedo_only={} material_confidence={} material_source={} exact_material_source=unavailable side_enabled=1 side_backend=screen_space_brush_query_replicated side_quality_success={} side_quality_failed={} job_stage=scene_capture_supplement\n"),
+                    ModTag,
+                    m_pipeline_job.alignment_stats.ok > 0
+                        ? m_pipeline_job.alignment_stats.delta_sum_px /
+                              static_cast<double>(m_pipeline_job.alignment_stats.ok)
+                        : 0.0,
+                    m_pipeline_job.alignment_stats.delta_p95_px,
+                    m_pipeline_job.alignment_stats.delta_max_px,
+                    m_pipeline_job.alignment_stats.fallback_samples,
+                    m_pipeline_job.capture_resolution_source,
+                    m_pipeline_job.brush.radius_source,
+                    m_pipeline_job.brush.requested_radius,
+                    m_pipeline_job.brush.radius,
+                    m_pipeline_job.brush.texture_min_radius,
+                    m_pipeline_job.brush.radius_clamped_by_game_min ? 1 : 0,
+                    m_pipeline_job.brush.brush_footprint_texels,
+                    m_pipeline_job.strokes_before_merge,
+                    m_pipeline_job.duplicate_merged_strokes,
+                    m_pipeline_job.stretch_inferred_strokes,
+                    m_pipeline_job.stretch_rejected_seam,
+                    m_pipeline_job.stretch_normal_limit,
+                    m_pipeline_job.material_channels_sent,
+                    m_pipeline_job.include_material_channels ? 0 : 1,
+                    material_confidence_label(m_pipeline_job.material_evidence.confidence),
+                    m_pipeline_job.material_evidence.source,
+                    m_pipeline_job.side_quality_success ? 1 : 0,
+                    m_pipeline_job.side_quality_failed ? 1 : 0);
+                RC::Output::send<RC::LogLevel::Warning>(
+                    STR("{} surface_sampling route=f10_v2_runtime_atlas accepted_samples={} rejected_samples={} material_resolved_samples={} scene_capture_samples={} exact_material_source=unavailable material_confidence={} material_source={} color_source=hidden_character_capture atlas_source={} atlas_probe_ok={} coverage_ok={} coverage_failure={} valid_coverage={} direct_coverage={} inferred_coverage={} per_chart_coverage={} lower_body_undercovered={} side_undercovered={} back_undercovered={} front_coverage_ok={} front_coverage_failed={} refined_reaches_coarse_bottom={} refined_grid_complete={} vertical_band_hits={}/{} refined_grid_cursor={} refined_total_cells={} apply_backend={} apply_backend_ok={} apply_rpc=ServerSendPaint_or_ServerPaint local_echo_rpc=PaintAtUVWithBrush replicated_apply={} replicated_partial={} quality_success={} max_replicated_strokes_per_tick={} apply_mode=AlphaBlend brush_radius={} brush_seed_radius_px={} effective_brush_world_radius={} brush_texture_min_radius={} brush_texture_max_radius={} brush_hardness={} brush_opacity={} brush_spacing={} brush_falloff={} brush_blend_mode={} brush_template_resolution={} brush_subdivision_level={} brush_subdivision_pixel_size={} brush_max_generated_triangles={} brush_gutter_expand_pixels={} brush_source={} no_apply={} texture_import_used=0 fallback_used=0 legacy_splat_success=0 side_enabled=1 side_backend=screen_space_brush_query_replicated side_quality_success={} side_quality_failed={} side_samples={} side_inferred_samples={} stretch_inferred_strokes={} stretch_rejected_seam={} stretch_normal_limit={} readback_backend=sampled_pixel_tick bulk_readback_used=0 sampled_readback_cursor={}/{} frame_budget_overrun={} job_stage=scene_capture_supplement phase_ms={} camera_state_restored={}\n"),
+                    ModTag,
+                    m_pipeline_job.apply_samples.size(),
+                    m_pipeline_job.surface_evidence.rejected_samples,
+                    m_pipeline_job.surface_evidence.material_resolved_samples,
+                    m_pipeline_job.surface_evidence.scene_capture_samples,
+                    material_confidence_label(m_pipeline_job.material_evidence.confidence),
+                    m_pipeline_job.material_evidence.source,
+                    RC::ensure_str(m_pipeline_job.atlas_probe.source.c_str()),
+                    m_pipeline_job.atlas_probe.ok ? 1 : 0,
+                    m_pipeline_job.atlas_coverage.ok ? 1 : 0,
+                    RC::ensure_str(m_pipeline_job.atlas_coverage.failure.c_str()),
+                    m_pipeline_job.atlas_coverage.valid_coverage_ratio,
+                    m_pipeline_job.atlas_coverage.direct_coverage_ratio,
+                    m_pipeline_job.atlas_coverage.inferred_coverage_ratio,
+                    m_pipeline_job.atlas_coverage.min_chart_coverage,
+                    m_pipeline_job.atlas_coverage.lower_body_undercovered ? 1 : 0,
+                    m_pipeline_job.atlas_coverage.side_undercovered ? 1 : 0,
+                    m_pipeline_job.atlas_coverage.back_undercovered ? 1 : 0,
+                    m_pipeline_job.front_coverage_ok ? 1 : 0,
+                    m_pipeline_job.front_coverage_failed ? 1 : 0,
+                    m_pipeline_job.front_coverage.reaches_coarse_bottom ? 1 : 0,
+                    m_pipeline_job.front_coverage.refined_grid_complete ? 1 : 0,
+                    m_pipeline_job.vertical_band_hits,
+                    m_pipeline_job.vertical_band_count,
+                    m_pipeline_job.refine_cursor,
+                    m_pipeline_job.refine_total_cells,
+                    apply_backend_label(m_pipeline_job.apply_backend.backend),
+                    m_pipeline_job.apply_backend.ok ? 1 : 0,
+                    m_pipeline_job.stroke_plan.ok ? 1 : 0,
+                    m_pipeline_job.stroke_plan.partial ? 1 : 0,
+                    m_pipeline_job.stroke_plan.quality_success ? 1 : 0,
+                    m_pipeline_job.stroke_plan.strokes_per_tick,
+                    m_pipeline_job.brush.radius,
+                    m_pipeline_job.brush.seed_radius_px,
+                    m_pipeline_job.brush.effective_world_radius,
+                    m_pipeline_job.brush.texture_min_radius,
+                    m_pipeline_job.brush.texture_max_radius,
+                    m_pipeline_job.brush.hardness,
+                    m_pipeline_job.brush.opacity,
+                    m_pipeline_job.brush.spacing,
+                    m_pipeline_job.brush.falloff,
+                    m_pipeline_job.brush.blend_mode,
+                    m_pipeline_job.brush.template_resolution,
+                    m_pipeline_job.brush.subdivision_level,
+                    m_pipeline_job.brush.subdivision_pixel_size,
+                    m_pipeline_job.brush.max_generated_brush_triangles,
+                    m_pipeline_job.brush.gutter_expand_pixels,
+                    m_pipeline_job.brush.source,
+                    m_pipeline_job.stroke_plan.ok ? 0 : 1,
+                    m_pipeline_job.side_quality_success ? 1 : 0,
+                    m_pipeline_job.side_quality_failed ? 1 : 0,
+                    m_pipeline_job.side_sample_count,
+                    m_pipeline_job.side_inferred_samples,
+                    m_pipeline_job.stretch_inferred_strokes,
+                    m_pipeline_job.stretch_rejected_seam,
+                    m_pipeline_job.stretch_normal_limit,
+                    m_pipeline_job.sampled_readback_cursor,
+                    m_pipeline_job.sampled_readback_colors.size(),
+                    m_pipeline_job.frame_budget_overrun ? 1 : 0,
+                    m_pipeline_job.timing.background_trace_ms + m_pipeline_job.timing.bulk_readback_ms,
+                    m_pipeline_job.camera_state_restored ? 1 : 0);
+                if (!m_pipeline_job.stroke_plan.ok)
+                {
+                    m_state.failures = 1;
+                    m_state.success = 0;
+                    m_state.paint_uv_success = 0;
+                    m_state.verified_visible_backend = false;
+                    m_state.verified_paint_function = STR("replicated_paint_api.refused");
+                    m_state.last_failure = RC::ensure_str(m_pipeline_job.stroke_plan.failure.c_str());
+                    RC::Output::send<RC::LogLevel::Warning>(
+                        STR("{} play replicated_paint refused reason={} failure={} no_apply=1 texture_import_used=0 import_backend=0 replicated_apply=0 fallback_used=0 legacy_splat_success=0 apply_backend={} readback_backend=sampled_pixel_tick bulk_readback_used=0 sampled_readback_cursor={}/{} phase_ms=({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}) frame_budget_overrun={} camera_state_restored={} job_stage=scene_capture_supplement\n"),
+                        ModTag,
+                        m_pipeline_job.reason.empty() ? STR("<none>") : m_pipeline_job.reason,
+                        m_state.last_failure,
+                        apply_backend_label(m_pipeline_job.apply_backend.backend),
+                        m_pipeline_job.sampled_readback_cursor,
+                        m_pipeline_job.sampled_readback_colors.size(),
+                        m_pipeline_job.timing.resolve_ms,
+                        m_pipeline_job.timing.coarse_hit_ms,
+                        m_pipeline_job.timing.refined_hit_ms,
+                        m_pipeline_job.timing.background_trace_ms,
+                        m_pipeline_job.timing.capture_scene_ms,
+                        m_pipeline_job.timing.bulk_readback_ms,
+                        m_pipeline_job.timing.calibration_ms,
+                        m_pipeline_job.timing.side_query_ms,
+                        m_pipeline_job.timing.assembly_ms,
+                        m_pipeline_job.timing.import_ms,
+                        m_pipeline_job.timing.verify_ms,
+                        m_pipeline_job.frame_budget_overrun ? 1 : 0,
+                        m_pipeline_job.camera_state_restored ? 1 : 0);
+                    finish_pipeline_job();
+                    return;
+                }
+
+                destroy_sampled_scene_capture(m_pipeline_job.sampled_capture);
+                m_state.queued_strokes = static_cast<int>(m_pipeline_job.apply_samples.size());
+                m_pipeline_job.apply_cursor = 0;
+                m_pipeline_job.stage = UiPipelineStage::Apply;
+                m_pipeline_job.stage_start = SteadyClock::now();
+                return;
+            }
+
             if (m_pipeline_job.stage == UiPipelineStage::Apply)
             {
                 const auto apply_tick_start = SteadyClock::now();
@@ -11790,7 +12659,7 @@ namespace
                                                : STR("<none>");
                 }
                 RC::Output::send<RC::LogLevel::Warning>(
-                    STR("{} play replicated_paint result reason={} success={} visible_backend={} queued_strokes={} replicated_apply=1 replicated_strokes_sent={} local_echo_strokes={} replicated_strokes_failed={} apply_rpc={} local_echo_rpc={} import_backend=0 texture_import_used=0 no_apply=0 albedo_only={} material_channels_sent={} replicated_partial={} quality_success={} front_coverage_ok={} front_coverage_failed={} coverage_failure={} refined_reaches_coarse_bottom={} refined_grid_complete={} vertical_band_hits={}/{} refined_grid_cursor={} refined_total_cells={} side_enabled=0 side_backend=front_first_deferred atlas_source={} atlas_probe_ok={} exact_material_source=unavailable material_confidence={} material_source={} color_source=hidden_character_capture brush_payload=1 apply_mode=AlphaBlend brush_radius={} effective_brush_world_radius={} brush_seed_radius_px={} brush_radius_source={} requested_brush_radius={} brush_radius_clamped_by_game_min={} brush_footprint_texels={} strokes_before_merge={} duplicate_merged_strokes={} capture_alignment=project_world_to_screen alignment_used=1 projected_delta_avg_px={} projected_delta_p95_px={} projected_delta_max_px={} alignment_fallback_samples={} brush_subdivision_level={} brush_subdivision_pixel_size={} frame_budget_overrun={} apply_frame_overruns={} phase_ms=({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}) fallback_used=0 legacy_splat_success=0 job_stage=complete\n"),
+                    STR("{} play replicated_paint result reason={} success={} visible_backend={} queued_strokes={} replicated_apply=1 replicated_strokes_sent={} local_echo_strokes={} replicated_strokes_failed={} apply_rpc={} local_echo_rpc={} import_backend=0 texture_import_used=0 no_apply=0 albedo_only={} material_channels_sent={} replicated_partial={} quality_success={} front_coverage_ok={} front_coverage_failed={} coverage_failure={} refined_reaches_coarse_bottom={} refined_grid_complete={} vertical_band_hits={}/{} refined_grid_cursor={} refined_total_cells={} side_enabled=1 side_backend=screen_space_brush_query_replicated side_quality_success={} side_quality_failed={} side_samples={} side_inferred_samples={} stretch_inferred_strokes={} stretch_rejected_seam={} stretch_normal_limit={} readback_backend=sampled_pixel_tick bulk_readback_used=0 sampled_readback_cursor={}/{} atlas_source={} atlas_probe_ok={} exact_material_source=unavailable material_confidence={} material_source={} color_source=hidden_character_capture brush_payload=1 apply_mode=AlphaBlend brush_radius={} effective_brush_world_radius={} brush_seed_radius_px={} brush_radius_source={} requested_brush_radius={} brush_radius_clamped_by_game_min={} brush_footprint_texels={} strokes_before_merge={} duplicate_merged_strokes={} capture_alignment=project_world_to_screen alignment_used=1 projected_delta_avg_px={} projected_delta_p95_px={} projected_delta_max_px={} alignment_fallback_samples={} brush_subdivision_level={} brush_subdivision_pixel_size={} frame_budget_overrun={} apply_frame_overruns={} phase_ms=({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}) fallback_used=0 legacy_splat_success=0 job_stage=complete\n"),
                     ModTag,
                     m_pipeline_job.reason.empty() ? STR("<none>") : m_pipeline_job.reason,
                     m_state.success,
@@ -11814,6 +12683,15 @@ namespace
                     m_pipeline_job.vertical_band_count,
                     m_pipeline_job.refine_cursor,
                     m_pipeline_job.refine_total_cells,
+                    m_pipeline_job.side_quality_success ? 1 : 0,
+                    m_pipeline_job.side_quality_failed ? 1 : 0,
+                    m_pipeline_job.side_sample_count,
+                    m_pipeline_job.side_inferred_samples,
+                    m_pipeline_job.stretch_inferred_strokes,
+                    m_pipeline_job.stretch_rejected_seam,
+                    m_pipeline_job.stretch_normal_limit,
+                    m_pipeline_job.sampled_readback_cursor,
+                    m_pipeline_job.sampled_readback_colors.size(),
                     RC::ensure_str(m_pipeline_job.atlas_probe.source.c_str()),
                     m_pipeline_job.atlas_probe.ok ? 1 : 0,
                     material_confidence_label(m_pipeline_job.material_evidence.confidence),

@@ -676,6 +676,131 @@ int main()
     }
 
     {
+        const auto first = Core::plan_sampled_readback_tick(Core::SampledReadbackTickInput{
+            10,
+            0,
+            10,
+            1.5,
+            4.0,
+            8.0});
+        assert(first.next_cursor == 3);
+        assert(first.samples_this_tick == 3);
+        assert(!first.complete);
+        assert(first.frame_budget_overrun);
+        assert(!first.hard_budget_overrun);
+
+        const auto second = Core::plan_sampled_readback_tick(Core::SampledReadbackTickInput{
+            10,
+            first.next_cursor,
+            2,
+            0.1,
+            4.0,
+            8.0});
+        assert(second.next_cursor == 5);
+        assert(second.samples_this_tick == 2);
+        assert(!second.frame_budget_overrun);
+
+        const auto final = Core::plan_sampled_readback_tick(Core::SampledReadbackTickInput{
+            10,
+            9,
+            64,
+            0.05,
+            4.0,
+            8.0});
+        assert(final.next_cursor == 10);
+        assert(final.complete);
+    }
+
+    {
+        std::vector<Core::SurfaceStretchSeed> seeds{};
+        seeds.push_back(Core::SurfaceStretchSeed{
+            0.10,
+            0.10,
+            100.0,
+            100.0,
+            0.0,
+            0.0,
+            1.0,
+            Core::Color{1.0, 0.0, 0.0, 0.5, 0.0},
+            true,
+            1});
+        seeds.push_back(Core::SurfaceStretchSeed{
+            0.12,
+            0.10,
+            120.0,
+            102.0,
+            0.0,
+            0.0,
+            1.0,
+            Core::Color{0.0, 0.0, 1.0, 0.7, 0.2},
+            true,
+            1});
+        const auto report = Core::infer_surface_stretch_seeds(seeds, Core::SurfaceStretchPolicy{
+            0.03,
+            32.0,
+            0.90,
+            8});
+        assert(report.direct_preserved == 2);
+        assert(report.inferred.size() == 1);
+        assert(std::abs(report.inferred[0].u - 0.11) < 0.000001);
+        assert(std::abs(report.inferred[0].color.r - 0.5) < 0.000001);
+        assert(std::abs(report.inferred[0].color.b - 0.5) < 0.000001);
+        assert(report.inferred[0].priority < 0);
+
+        seeds.push_back(Core::SurfaceStretchSeed{
+            0.90,
+            0.90,
+            400.0,
+            400.0,
+            1.0,
+            0.0,
+            0.0,
+            Core::Color{0.2, 0.2, 0.2, 0.5, 0.0},
+            true,
+            1});
+        const auto limited = Core::infer_surface_stretch_seeds(seeds, Core::SurfaceStretchPolicy{
+            0.03,
+            32.0,
+            0.90,
+            16});
+        assert(limited.rejected_seam > 0);
+        assert(limited.normal_limit == 0);
+
+        seeds[1].normal_x = 1.0;
+        seeds[1].normal_z = 0.0;
+        const auto normal_limited = Core::infer_surface_stretch_seeds(seeds, Core::SurfaceStretchPolicy{
+            0.03,
+            32.0,
+            0.90,
+            16});
+        assert(normal_limited.normal_limit > 0);
+    }
+
+    {
+        const auto low_side = Core::evaluate_side_coverage(Core::SideCoverageInput{
+            true,
+            48,
+            40,
+            128,
+            true});
+        assert(low_side.front_quality_success);
+        assert(!low_side.side_quality_success);
+        assert(low_side.side_quality_failed);
+        assert(low_side.failure == "side_coverage_failed_budget_exhausted");
+
+        const auto enough_side = Core::evaluate_side_coverage(Core::SideCoverageInput{
+            true,
+            512,
+            80,
+            128,
+            false});
+        assert(enough_side.front_quality_success);
+        assert(enough_side.side_quality_success);
+        assert(!enough_side.side_quality_failed);
+        assert(enough_side.inferred_ratio > 0.15);
+    }
+
+    {
         const auto preserved = Core::resolve_verified_material_evidence(Core::MaterialEvidence{},
                                                                         0.74,
                                                                         0.12);
