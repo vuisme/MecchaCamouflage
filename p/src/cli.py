@@ -8,6 +8,7 @@ import os
 import signal
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from uuid import uuid4
 from pathlib import Path
 from time import perf_counter, sleep
@@ -29,6 +30,7 @@ from src.diagnostics import RuntimeDiagnostics
 from src.native_bridge import (
     DEFAULT_BRIDGE_HOST,
     NativeBridgeClient,
+    bridge_progress_file,
     choose_bridge_port,
     inject_bridge,
     native_assets,
@@ -184,6 +186,18 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=240.0,
         help="Timeout for xenos transport operations.",
+    )
+    parser.add_argument(
+        "--native-apply-mode",
+        choices=(
+            "metallic_base_then_front_texture_import_diagnostic",
+            "front_metallic_texture_import_diagnostic",
+            "front_metallic_texture_paint_stream",
+            "texture_atlas_paint_api_stream",
+            "texture_import_diagnostic",
+        ),
+        default="metallic_base_then_front_texture_import_diagnostic",
+        help="Native F10 apply mode; texture_import_diagnostic is explicit temporary diagnostics only.",
     )
     parser.add_argument(
         "--bridge-retries",
@@ -482,10 +496,25 @@ def _bridge_status(args: argparse.Namespace, state: str, extra: dict[str, Any] |
 
 
 def _build_full_route_payload(args: argparse.Namespace, plan, process: ProcessInfo | None, run_id: str) -> dict[str, Any]:
+    native_apply_mode = getattr(args, "native_apply_mode", "metallic_base_then_front_texture_import_diagnostic")
+    if native_apply_mode == "texture_import_diagnostic":
+        route = "f10_texture_import_diagnostic"
+    elif native_apply_mode == "texture_atlas_paint_api_stream":
+        route = "f10_texture_atlas_paint_api_stream"
+    elif native_apply_mode == "front_metallic_texture_paint_stream":
+        route = "f10_front_metallic_texture_paint_stream"
+    elif native_apply_mode == "front_metallic_texture_import_diagnostic":
+        route = "f10_front_metallic_texture_import_diagnostic"
+    else:
+        route = "f10_metallic_base_then_front_texture_import_diagnostic"
     return {
-        "route": "f10_texture_import_diagnostic",
-        "native_apply_mode": "texture_import_diagnostic",
-        "temporary_diagnostic_only": True,
+        "route": route,
+        "native_apply_mode": native_apply_mode,
+        "temporary_diagnostic_only": native_apply_mode in {
+            "texture_import_diagnostic",
+            "front_metallic_texture_import_diagnostic",
+            "metallic_base_then_front_texture_import_diagnostic",
+        },
         "run_id": run_id,
         "process": _process_status(process, args.game_process_name),
         "plan": plan_to_dict(plan),
@@ -712,6 +741,69 @@ def _run_apply(
     return result, timing
 
 
+def _apply_via_native_bridge_with_wait_logs(
+    args: argparse.Namespace,
+    plan,
+    process: ProcessInfo,
+    run_id: str,
+    diagnostics: RuntimeDiagnostics,
+    run_start: float,
+):
+    wait_interval = 5.0
+    progress_path = bridge_progress_file(native_assets(args.native_root))
+    last_progress_signature = ""
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="meccha-native-paint") as executor:
+        future = executor.submit(_apply_via_native_bridge, args, plan, process, run_id)
+        while True:
+            try:
+                return future.result(timeout=wait_interval)
+            except FutureTimeoutError:
+                elapsed_ms = (perf_counter() - run_start) * 1000.0
+                progress: dict[str, Any] = {}
+                try:
+                    if progress_path.exists():
+                        loaded = json.loads(progress_path.read_text(encoding="utf-8"))
+                        if isinstance(loaded, dict):
+                            progress = loaded
+                except (OSError, json.JSONDecodeError):
+                    progress = {}
+                progress_stage = str(progress.get("stage") or "native_call")
+                progress_ratio = float(progress.get("progress") or 0.0)
+                eta_ms = float(progress.get("eta_ms") or 0.0)
+                signature = f"{progress_stage}:{int(progress_ratio * 100)}"
+                message = (
+                    f"{progress_stage} progress={progress_ratio * 100.0:.0f}% "
+                    f"elapsed={elapsed_ms / 1000.0:.1f}s"
+                )
+                if eta_ms > 0:
+                    message += f" eta={eta_ms / 1000.0:.1f}s"
+                diagnostics.merge_status(
+                    last_run={
+                        "run_id": run_id,
+                        "stage": progress_stage,
+                        "success": False,
+                        "elapsed_ms": elapsed_ms,
+                        "progress": progress,
+                        "message": message,
+                    }
+                )
+                if signature != last_progress_signature:
+                    details = {
+                        "elapsed_ms": elapsed_ms,
+                        "timeout_seconds": args.bridge_timeout_seconds,
+                        "native_apply_mode": getattr(args, "native_apply_mode", ""),
+                    }
+                    details.update(progress)
+                    diagnostics.event(
+                        "paint_progress",
+                        stage=progress_stage,
+                        run_id=run_id,
+                        message=message,
+                        details=details,
+                    )
+                    last_progress_signature = signature
+
+
 def _maybe_print_generate_summary(plan, generated_ms: float, readback_ms: float) -> None:
     buckets, counts = simulate_paint_distribution(plan)
     print(
@@ -875,6 +967,8 @@ def _run_service(
     bridge_ready = False
     inject_attempted_for_pid = 0
     sdk_probe_attempted_for_pid = 0
+    last_bridge_log_state = ""
+    last_bridge_log_time = 0.0
     signal.signal(signal.SIGINT, _stop_signal)
     signal.signal(signal.SIGTERM, _stop_signal)
 
@@ -913,6 +1007,8 @@ def _run_service(
             attached_process = process
             inject_attempted_for_pid = 0
             sdk_probe_attempted_for_pid = 0
+            last_bridge_log_state = ""
+            last_bridge_log_time = 0.0
             diagnostics.merge_status(process=_process_status(process, args.game_process_name))
             diagnostics.event(
                 "process_attached",
@@ -924,13 +1020,21 @@ def _run_service(
         if args.adapter == "xenos" and not args.bridge_path and now - last_bridge_check >= heartbeat_interval_sec:
             bridge_ready, bridge_details = _check_native_bridge(args)
             diagnostics.merge_status(bridge=_bridge_status(args, "ready" if bridge_ready else "not_ready", bridge_details))
-            diagnostics.event(
-                "bridge_ready" if bridge_ready else "bridge_waiting",
-                level="info" if bridge_ready else "warning",
-                stage="bridge",
-                message=bridge_details.get("message", ""),
-                details=bridge_details,
+            bridge_log_state = "ready" if bridge_ready else "not_ready"
+            should_log_bridge = (
+                bridge_log_state != last_bridge_log_state
+                or (not bridge_ready and now - last_bridge_log_time >= 30.0)
             )
+            if should_log_bridge:
+                diagnostics.event(
+                    "bridge_ready" if bridge_ready else "bridge_waiting",
+                    level="info" if bridge_ready else "warning",
+                    stage="bridge",
+                    message=bridge_details.get("message", ""),
+                    details=bridge_details,
+                )
+                last_bridge_log_state = bridge_log_state
+                last_bridge_log_time = now
             if not bridge_ready and inject_attempted_for_pid != process.pid:
                 diagnostics.event(
                     "inject_started",
@@ -986,7 +1090,7 @@ def _run_service(
 
         if not should_apply:
             now = perf_counter()
-            if now - last_heartbeat >= heartbeat_interval_sec:
+            if now - last_heartbeat >= max(60.0, heartbeat_interval_sec * 15.0):
                 diagnostics.event(
                     "service_idle",
                     stage="idle",
@@ -1040,7 +1144,7 @@ def _run_service(
         )
 
         if args.adapter == "xenos" and not args.bridge_path:
-            result = _apply_via_native_bridge(args, plan, process, run_id)
+            result = _apply_via_native_bridge_with_wait_logs(args, plan, process, run_id, diagnostics, run_start)
             timing_result = dict(timing)
             timing_result.update(result.timing_ms or {})
             timing_result["total_ms"] = (perf_counter() - run_start) * 1000.0
@@ -1072,7 +1176,16 @@ def _run_service(
                     stage=bridge_event,
                     run_id=run_id,
                     message=bridge_event,
-                    details={"metadata": result.metadata, "timing_ms": timing_result},
+                    details={
+                        "elapsed_ms": bridge_metadata.get("elapsed_ms") if isinstance(bridge_metadata, dict) else None,
+                        "front_hits": bridge_metadata.get("front_hits") if isinstance(bridge_metadata, dict) else None,
+                        "side_back_hits": bridge_metadata.get("side_back_hits") if isinstance(bridge_metadata, dict) else None,
+                        "stroke_count": bridge_metadata.get("stroke_count") if isinstance(bridge_metadata, dict) else None,
+                        "stroke_cap": bridge_metadata.get("stroke_cap") if isinstance(bridge_metadata, dict) else None,
+                        "server_sent": bridge_metadata.get("server_sent") if isinstance(bridge_metadata, dict) else None,
+                        "server_failed": bridge_metadata.get("server_failed") if isinstance(bridge_metadata, dict) else None,
+                        "timing_ms": timing_result,
+                    },
                 )
 
         if not result.success:

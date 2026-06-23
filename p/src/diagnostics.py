@@ -134,11 +134,65 @@ class RuntimeDiagnostics:
         ).rstrip()
         print(message, flush=True)
         if entry.get("level") in {"warning", "error"} and entry.get("details"):
+            details = self._console_details(entry["details"])
             print(
                 "  details="
-                + json.dumps(entry["details"], ensure_ascii=False, sort_keys=True),
+                + json.dumps(details, ensure_ascii=False, sort_keys=True),
                 file=sys.stderr,
                 flush=True,
             )
         if entry.get("level") == "error":
             print(f"  log_dir={self.log_dir}", file=sys.stderr, flush=True)
+
+    def _console_details(self, details: dict[str, Any]) -> dict[str, Any]:
+        """Keep console output readable; events.jsonl/runtime.log keep full details."""
+        if not isinstance(details, dict):
+            return {}
+        metadata = details.get("metadata")
+        if not isinstance(metadata, dict):
+            return details
+        bridge_response = metadata.get("bridge_response")
+        bridge_meta = bridge_response.get("metadata") if isinstance(bridge_response, dict) else None
+        if not isinstance(bridge_meta, dict):
+            return details
+        keep = {
+            "adapter": details.get("adapter"),
+            "requested": details.get("requested"),
+            "applied": details.get("applied"),
+            "failures": details.get("failures"),
+            "stage": metadata.get("stage") or bridge_response.get("stage"),
+            "message": bridge_response.get("message"),
+            "timing_ms": details.get("timing_ms"),
+        }
+        for key in (
+            "route",
+            "capture_resolution",
+            "front_hits",
+            "side_back_hits",
+            "stroke_count",
+            "stroke_cap",
+            "stroke_target",
+            "atlas_stroke_failure",
+            "server_rpc",
+            "server_batches",
+            "server_sent",
+            "server_failed",
+            "hash_changed",
+            "paint_api_probe_sent",
+            "paint_api_probe_hash_changed",
+            "paint_api_probe_selected",
+            "paint_api_probe_selected_final",
+            "paint_api_probe_server_sent",
+            "paint_api_probe_server_failed",
+            "paint_api_probe_uv_albedo_hash_changed",
+            "paint_api_probe_world_albedo_hash_changed",
+            "paint_api_probe_world_amr_hash_changed",
+            "atlas_use_world_position",
+            "atlas_target_channel",
+            "atlas_use_world_position_final",
+            "atlas_target_channel_final",
+            "elapsed_ms",
+        ):
+            if key in bridge_meta:
+                keep[key] = bridge_meta[key]
+        return {key: value for key, value in keep.items() if value is not None}

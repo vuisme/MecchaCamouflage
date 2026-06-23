@@ -57,6 +57,10 @@ def bridge_port_file(assets: NativeAssets) -> Path:
     return Path(str(assets.bridge_dll) + ".port")
 
 
+def bridge_progress_file(assets: NativeAssets) -> Path:
+    return Path(str(assets.bridge_dll) + ".progress.json")
+
+
 def write_bridge_port_file(assets: NativeAssets, port: int) -> Path:
     path = bridge_port_file(assets)
     path.write_text(f"{int(port)}\n", encoding="ascii")
