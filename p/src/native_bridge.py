@@ -103,6 +103,9 @@ class NativeBridgeClient:
     def sdk_probe(self) -> tuple[BridgeResponse, float]:
         return self.request("sdk_probe", {})
 
+    def sdk_deep_probe(self) -> tuple[BridgeResponse, float]:
+        return self.request("sdk_deep_probe", {})
+
     def paint_full_route(self, payload: dict[str, Any]) -> tuple[BridgeResponse, float]:
         return self.request("paint_full_route", payload)
 

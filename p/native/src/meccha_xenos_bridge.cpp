@@ -259,6 +259,24 @@ namespace
         }
     }
 
+    auto write_bridge_sidecar_text(const wchar_t* suffix, const std::string& text) -> bool
+    {
+        const auto path = bridge_sidecar_path(suffix);
+        if (path.empty())
+        {
+            return false;
+        }
+        HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE)
+        {
+            return false;
+        }
+        DWORD written = 0;
+        const auto ok = WriteFile(file, text.data(), static_cast<DWORD>(text.size()), &written, nullptr);
+        CloseHandle(file);
+        return ok && written == text.size();
+    }
+
     struct ModuleRange
     {
         std::uintptr_t base{0};
@@ -7298,6 +7316,8 @@ namespace
             write_bridge_progress(stage, message, step, total_steps, elapsed_ms, extra);
         };
         const bool is_probe = request.find("\"type\":\"sdk_probe\"") != std::string::npos;
+        const bool is_deep_probe = request.find("\"type\":\"sdk_deep_probe\"") != std::string::npos ||
+                                   request.find("\"native_apply_mode\":\"sdk_deep_probe_only\"") != std::string::npos;
         const bool legacy_diagnostic_import = request.find("\"native_apply_mode\":\"texture_import_diagnostic\"") != std::string::npos ||
                                               request.find("\"route\":\"f10_texture_import_diagnostic\"") != std::string::npos;
         const bool front_texture_import = request.find("\"native_apply_mode\":\"front_metallic_texture_import_diagnostic\"") != std::string::npos ||
@@ -7328,7 +7348,7 @@ namespace
                 }
             }
         } busy_guard{&paint_busy, false};
-        if (!is_probe)
+        if (!is_probe && !is_deep_probe)
         {
             clear_bridge_progress();
             emit_progress("paint_started", "native paint request accepted", 0, 8, 0.0);
@@ -7353,7 +7373,7 @@ namespace
             const auto stage = is_probe ? ctx.stage : std::string("sdk_context_unavailable");
             return response_json(false, stage.c_str(), 0, 1, ctx.message, metadata);
         }
-        if (!legacy_diagnostic_import && !front_texture_import && !sdk_has_replicated_api(ctx))
+        if (!legacy_diagnostic_import && !front_texture_import && !is_probe && !is_deep_probe && !sdk_has_replicated_api(ctx))
         {
             return response_json(false,
                                  "replicated_api_unavailable",
@@ -7361,6 +7381,78 @@ namespace
                                  1,
                                  "ServerPaintBatch replicated paint RPC is unavailable",
                                  metadata + ",\"bridge_events\":[\"replicated_api_unavailable\"]");
+        }
+        if (is_deep_probe)
+        {
+            const auto mesh = sdk_find_front_mesh(ref, ctx);
+            const auto query = sdk_find_screen_space_brush_query(ref, ctx);
+            const auto viewport = sdk_get_viewport_info(ref, ctx);
+            const auto deproject_function = ref.find_function(ctx.controller, "DeprojectScreenPositionToWorld");
+            const auto query_function = query ? ref.find_function(query, "QueryFromWorldRay") : 0;
+            const auto get_skeletal_mesh_asset = mesh ? ref.find_function(mesh, "GetSkeletalMeshAsset") : 0;
+            const auto get_skeletal_mesh = mesh ? ref.find_function(mesh, "GetSkeletalMesh") : 0;
+            const auto get_static_mesh = mesh ? ref.find_function(mesh, "GetStaticMesh") : 0;
+            const auto get_mesh_paint_uv_index = mesh ? ref.find_function(mesh, "GetMeshPaintTextureCoordinateIndex") : 0;
+            auto property_offset_for_object = [&](std::uintptr_t object, const char* name) -> int {
+                for (auto cls = ref.class_ptr(object); cls; cls = safe_read<std::uintptr_t>(cls + OffSuperStruct))
+                {
+                    const auto prop = ref.find_property(cls, name);
+                    if (prop)
+                    {
+                        return prop_offset(prop);
+                    }
+                }
+                return -1;
+            };
+            const auto component_to_world_offset = property_offset_for_object(mesh, "ComponentToWorld");
+            const auto bounds_offset = property_offset_for_object(mesh, "Bounds");
+            const auto skeletal_mesh_property_offset = property_offset_for_object(mesh, "SkeletalMesh");
+            const auto static_mesh_property_offset = property_offset_for_object(mesh, "StaticMesh");
+            const bool mesh_component_available = mesh && live_uobject(mesh);
+            const bool mesh_asset_function_available = get_skeletal_mesh_asset || get_skeletal_mesh || get_static_mesh;
+            std::string deep = metadata +
+                ",\"deep_probe_version\":1" +
+                ",\"deep_probe_paint_mutation\":false" +
+                ",\"deep_probe_import_mutation\":false" +
+                ",\"deep_probe_sidecar\":\"meccha-xenos-bridge.dll.deep_probe.json\"" +
+                ",\"viewport_width\":" + std::to_string(viewport.width) +
+                ",\"viewport_height\":" + std::to_string(viewport.height) +
+                ",\"mesh_component_available\":" + json_bool(mesh_component_available) +
+                ",\"mesh_component\":\"" + hex_address(mesh) + "\"" +
+                ",\"mesh_component_class\":\"" + json_escape(ref.class_name(mesh)) + "\"" +
+                ",\"mesh_component_to_world_offset\":" + std::to_string(component_to_world_offset) +
+                ",\"mesh_bounds_offset\":" + std::to_string(bounds_offset) +
+                ",\"mesh_skeletal_mesh_property_offset\":" + std::to_string(skeletal_mesh_property_offset) +
+                ",\"mesh_static_mesh_property_offset\":" + std::to_string(static_mesh_property_offset) +
+                ",\"function_get_skeletal_mesh_asset_available\":" + json_bool(get_skeletal_mesh_asset != 0) +
+                ",\"function_get_skeletal_mesh_available\":" + json_bool(get_skeletal_mesh != 0) +
+                ",\"function_get_static_mesh_available\":" + json_bool(get_static_mesh != 0) +
+                ",\"function_get_mesh_paint_uv_index_available\":" + json_bool(get_mesh_paint_uv_index != 0) +
+                ",\"function_deproject_available\":" + json_bool(deproject_function != 0) +
+                ",\"function_deproject_schema\":\"" + json_escape(function_param_schema(ref, deproject_function)) + "\"" +
+                ",\"screen_space_brush_query_available\":" + json_bool(query != 0) +
+                ",\"screen_space_brush_query\":\"" + hex_address(query) + "\"" +
+                ",\"screen_space_brush_query_class\":\"" + json_escape(ref.class_name(query)) + "\"" +
+                ",\"function_query_from_world_ray_available\":" + json_bool(query_function != 0) +
+                ",\"function_query_from_world_ray_schema\":\"" + json_escape(function_param_schema(ref, query_function)) + "\"" +
+                ",\"function_export_schema\":\"" + json_escape(function_param_schema(ref, ctx.export_function)) + "\"" +
+                ",\"function_import_schema\":\"" + json_escape(function_param_schema(ref, ctx.import_function)) + "\"" +
+                ",\"function_server_paint_batch_schema\":\"" + json_escape(function_param_schema(ref, ctx.server_paint_batch_function)) + "\"" +
+                ",\"function_paint_at_uv_with_brush_schema\":\"" + json_escape(function_param_schema(ref, ctx.paint_at_uv_with_brush_function)) + "\"" +
+                ",\"mesh_snapshot_probe_implemented\":false" +
+                ",\"mesh_render_data_available\":false" +
+                ",\"mesh_vertex_buffer_available\":false" +
+                ",\"mesh_index_buffer_available\":false" +
+                ",\"mesh_uv_buffer_available\":false" +
+                ",\"skinned_position_source_available\":false" +
+                ",\"cpu_mesh_raycast_candidate\":" + json_bool(mesh_component_available && mesh_asset_function_available) +
+                ",\"cpu_mesh_raycast_blocker\":\"" + std::string(mesh_component_available && mesh_asset_function_available ? "render_data_offsets_not_dumped_yet" : "mesh_component_or_asset_function_unavailable") + "\"" +
+                ",\"bridge_events\":[\"sdk_deep_probe\"]";
+            const bool wrote_sidecar = write_bridge_sidecar_text(
+                L".deep_probe.json",
+                std::string("{\"success\":true,\"stage\":\"sdk_deep_probe\",\"metadata\":{\"bridge\":\"meccha-xenos-bridge\",") + deep + "}}\n");
+            deep += std::string(",\"deep_probe_sidecar_written\":") + json_bool(wrote_sidecar);
+            return response_json(true, "sdk_deep_probe", 0, 0, "SDK deep probe completed without paint/import mutation", deep);
         }
 
         metadata += ",\"render_target_albedo\":\"" + hex_address(sdk_get_render_target(ctx, 0)) + "\"" +
@@ -8340,7 +8432,7 @@ namespace
         {
             return "{\"success\":true,\"stage\":\"capabilities\",\"applied\":0,\"failures\":0,"
                    "\"message\":\"ok\",\"timing_ms\":{},"
-                   "\"metadata\":{\"commands\":[\"ping\",\"capabilities\",\"sdk_probe\",\"paint_full_route\",\"shutdown\"],"
+                   "\"metadata\":{\"commands\":[\"ping\",\"capabilities\",\"sdk_probe\",\"sdk_deep_probe\",\"paint_full_route\",\"shutdown\"],"
                    "\"sdk\":\"chameleonEsp_dumper7_1_7_0_min\","
                    "\"paint_full_route\":\"metallic_base_then_front_texture_import_diagnostic\","
                    "\"replication\":\"component_server_paint_batch\","
@@ -8353,6 +8445,10 @@ namespace
             return response_json(true, "shutdown", 0, 0, "bridge shutdown requested");
         }
         if (line.find("\"type\":\"sdk_probe\"") != std::string::npos)
+        {
+            return paint_full_route_native(line);
+        }
+        if (line.find("\"type\":\"sdk_deep_probe\"") != std::string::npos)
         {
             return paint_full_route_native(line);
         }

@@ -195,6 +195,7 @@ def parse_args() -> argparse.Namespace:
             "front_metallic_texture_paint_stream",
             "texture_atlas_paint_api_stream",
             "texture_import_diagnostic",
+            "sdk_deep_probe_only",
         ),
         default="metallic_base_then_front_texture_import_diagnostic",
         help="Native F10 apply mode; texture_import_diagnostic is explicit temporary diagnostics only.",
@@ -505,6 +506,8 @@ def _build_full_route_payload(args: argparse.Namespace, plan, process: ProcessIn
         route = "f10_front_metallic_texture_paint_stream"
     elif native_apply_mode == "front_metallic_texture_import_diagnostic":
         route = "f10_front_metallic_texture_import_diagnostic"
+    elif native_apply_mode == "sdk_deep_probe_only":
+        route = "sdk_deep_probe_only"
     else:
         route = "f10_metallic_base_then_front_texture_import_diagnostic"
     return {
@@ -514,6 +517,7 @@ def _build_full_route_payload(args: argparse.Namespace, plan, process: ProcessIn
             "texture_import_diagnostic",
             "front_metallic_texture_import_diagnostic",
             "metallic_base_then_front_texture_import_diagnostic",
+            "sdk_deep_probe_only",
         },
         "run_id": run_id,
         "process": _process_status(process, args.game_process_name),
@@ -599,6 +603,27 @@ def _sdk_probe_bridge(args: argparse.Namespace) -> tuple[bool, dict[str, Any]]:
     client = NativeBridgeClient(args.bridge_host, args.bridge_port, args.bridge_timeout_seconds)
     try:
         response, elapsed_ms = client.sdk_probe()
+    except OSError as exc:
+        return False, {
+            "state": "not_ready",
+            "address": client.address,
+            "message": str(exc),
+            "win32_error": getattr(exc, "winerror", None),
+        }
+    return response.success, {
+        "state": "ready" if response.success else "failed",
+        "address": client.address,
+        "message": response.message,
+        "stage": response.stage,
+        "elapsed_ms": elapsed_ms,
+        "response": response.to_dict(),
+    }
+
+
+def _sdk_deep_probe_bridge(args: argparse.Namespace) -> tuple[bool, dict[str, Any]]:
+    client = NativeBridgeClient(args.bridge_host, args.bridge_port, args.bridge_timeout_seconds)
+    try:
+        response, elapsed_ms = client.sdk_deep_probe()
     except OSError as exc:
         return False, {
             "state": "not_ready",
@@ -967,6 +992,7 @@ def _run_service(
     bridge_ready = False
     inject_attempted_for_pid = 0
     sdk_probe_attempted_for_pid = 0
+    sdk_deep_probe_attempted_for_pid = 0
     last_bridge_log_state = ""
     last_bridge_log_time = 0.0
     signal.signal(signal.SIGINT, _stop_signal)
@@ -1007,6 +1033,7 @@ def _run_service(
             attached_process = process
             inject_attempted_for_pid = 0
             sdk_probe_attempted_for_pid = 0
+            sdk_deep_probe_attempted_for_pid = 0
             last_bridge_log_state = ""
             last_bridge_log_time = 0.0
             diagnostics.merge_status(process=_process_status(process, args.game_process_name))
@@ -1066,6 +1093,18 @@ def _run_service(
                     message=sdk_probe_details.get("message", ""),
                     details=sdk_probe_details,
                 )
+                if sdk_probe_ready and sdk_deep_probe_attempted_for_pid != process.pid:
+                    sdk_deep_probe_attempted_for_pid = process.pid
+                    deep_probe_ready, deep_probe_details = _sdk_deep_probe_bridge(args)
+                    bridge_details = {**bridge_details, "sdk_deep_probe": deep_probe_details}
+                    diagnostics.merge_status(bridge=_bridge_status(args, "ready" if bridge_ready else "not_ready", bridge_details))
+                    diagnostics.event(
+                        "sdk_deep_probe" if deep_probe_ready else "sdk_deep_probe_failed",
+                        level="info" if deep_probe_ready else "error",
+                        stage=deep_probe_details.get("stage", "sdk_deep_probe"),
+                        message=deep_probe_details.get("message", ""),
+                        details=deep_probe_details,
+                    )
             last_bridge_check = now
 
         should_apply = apply_every_frame
