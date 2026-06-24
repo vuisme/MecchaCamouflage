@@ -11,7 +11,6 @@ This repository is now centered on the Xenos-injected `p` runtime. The active ru
 - `scripts/`: build, deploy, and SDK dump workflow scripts.
 - `dumper-sdk/`: managed Dumper7 SDK output for the target game build.
 - `tools/Dumper-7/`: local Dumper-7 tool source.
-- `archives/`: legacy UE4SS implementation and notes, kept for reference only.
 
 The old UE4SS runtime is not part of the active build/deploy path.
 
@@ -81,7 +80,3 @@ High-level rules:
 - Local-only texture import is not a default runtime path.
 - Material swap, synthetic UV placement, and memory-scan fallback are forbidden.
 - Python remains as orchestration in phase 1; a C++ service replacement is tracked in `docs/cpp-service-roadmap.md`.
-
-## Archives
-
-Legacy UE4SS code, root scripts, and old notes are stored under `archives/`. They are not used by build/deploy.

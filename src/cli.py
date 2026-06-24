@@ -135,8 +135,8 @@ def parse_args() -> argparse.Namespace:
         default="service",
     )
     parser.add_argument("--input-plan", help="Load existing plan from JSON.")
-    parser.add_argument("--out-plan", default="out/paint_plan.json", help="Output path for generated plan")
-    parser.add_argument("--out-dir", default="out", help="Artifact directory for non-apply mode")
+    parser.add_argument("--out-plan", default=".build/out/paint_plan.json", help="Output path for generated plan")
+    parser.add_argument("--out-dir", default=".build/out", help="Artifact directory for non-apply mode")
     parser.add_argument("--input-image", help="Optional reference image used for sample colors")
     parser.add_argument("--sample-count", type=int, default=2048)
     parser.add_argument("--viewport-width", type=int, default=1920)
