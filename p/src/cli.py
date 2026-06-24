@@ -190,19 +190,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--native-apply-mode",
         choices=(
-            "metallic_base_then_front_texture_import_diagnostic",
-            "front_metallic_texture_import_diagnostic",
+            "front_atlas_paint_stream",
+            "front_sample_paint_stream",
             "front_metallic_texture_paint_stream",
             "texture_atlas_paint_api_stream",
-            "texture_import_diagnostic",
+            "texture_sync_strict_probe",
             "cpu_mesh_raycast",
             "cpu_mesh_probe_only",
-            "cpu_mesh_texture_import_diagnostic",
             "cpu_mesh_texture_paint_stream",
             "sdk_deep_probe_only",
         ),
-        default="metallic_base_then_front_texture_import_diagnostic",
-        help="Native F10 apply mode; texture_import_diagnostic is explicit temporary diagnostics only.",
+        default="front_atlas_paint_stream",
+        help="Native F10 apply mode; default uses ServerPaintBatch. texture_sync_strict_probe is the only texture-import probe.",
     )
     parser.add_argument(
         "--bridge-retries",
@@ -501,36 +500,33 @@ def _bridge_status(args: argparse.Namespace, state: str, extra: dict[str, Any] |
 
 
 def _build_full_route_payload(args: argparse.Namespace, plan, process: ProcessInfo | None, run_id: str) -> dict[str, Any]:
-    native_apply_mode = getattr(args, "native_apply_mode", "metallic_base_then_front_texture_import_diagnostic")
-    if native_apply_mode == "texture_import_diagnostic":
-        route = "f10_texture_import_diagnostic"
+    native_apply_mode = getattr(args, "native_apply_mode", "front_atlas_paint_stream")
+    if native_apply_mode == "texture_sync_strict_probe":
+        route = "f10_texture_sync_strict_probe"
+    elif native_apply_mode == "front_atlas_paint_stream":
+        route = "f10_front_atlas_paint_stream"
+    elif native_apply_mode == "front_sample_paint_stream":
+        route = "f10_front_sample_paint_stream"
     elif native_apply_mode == "texture_atlas_paint_api_stream":
         route = "f10_texture_atlas_paint_api_stream"
     elif native_apply_mode == "front_metallic_texture_paint_stream":
         route = "f10_front_metallic_texture_paint_stream"
-    elif native_apply_mode == "front_metallic_texture_import_diagnostic":
-        route = "f10_front_metallic_texture_import_diagnostic"
     elif native_apply_mode == "cpu_mesh_raycast":
         route = "f10_cpu_mesh_raycast"
     elif native_apply_mode == "cpu_mesh_probe_only":
         route = "f10_cpu_mesh_probe_only"
-    elif native_apply_mode == "cpu_mesh_texture_import_diagnostic":
-        route = "f10_cpu_mesh_texture_import_diagnostic"
     elif native_apply_mode == "cpu_mesh_texture_paint_stream":
         route = "f10_cpu_mesh_texture_paint_stream"
     elif native_apply_mode == "sdk_deep_probe_only":
         route = "sdk_deep_probe_only"
     else:
-        route = "f10_metallic_base_then_front_texture_import_diagnostic"
+        route = "f10_front_atlas_paint_stream"
     return {
         "route": route,
         "native_apply_mode": native_apply_mode,
         "temporary_diagnostic_only": native_apply_mode in {
-            "texture_import_diagnostic",
-            "front_metallic_texture_import_diagnostic",
-            "metallic_base_then_front_texture_import_diagnostic",
+            "texture_sync_strict_probe",
             "cpu_mesh_probe_only",
-            "cpu_mesh_texture_import_diagnostic",
             "sdk_deep_probe_only",
         },
         "run_id": run_id,

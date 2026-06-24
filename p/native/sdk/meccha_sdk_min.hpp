@@ -18,6 +18,8 @@ namespace meccha_sdk
         constexpr std::uintptr_t UWorld_OwningGameInstance = 0x0228;
         constexpr std::uintptr_t UGameInstance_LocalPlayers = 0x0038;
         constexpr std::uintptr_t UPlayer_PlayerController = 0x0030;
+        constexpr std::uintptr_t Controller_ControlRotation = 0x0320;
+        constexpr std::uintptr_t PlayerController_PlayerCameraManager = 0x0360;
         constexpr std::uintptr_t BP_PlayerController_RuntimePaintRelay = 0x0770;
         constexpr std::uintptr_t BP_FirstPersonCharacter_RuntimePaintable = 0x0B68;
         constexpr std::uintptr_t RuntimePaintable_CurrentBrushSettings = 0x0170;
@@ -333,6 +335,32 @@ namespace meccha_sdk
         FPaintStrokeBatch Batch{};
     };
 
+    struct RuntimePaintRelayComponent_RelayTextureSyncToServer
+    {
+        void* PaintComponent{nullptr};
+    };
+
+    struct RuntimePaintRelayComponent_ServerRelayTextureSync
+    {
+        void* PaintComponent{nullptr};
+    };
+
+    struct RuntimePaintableComponent_MulticastSyncChannelData
+    {
+        EPaintChannel Channel{EPaintChannel::Albedo};
+        std::uint8_t Pad_1[0x7]{};
+        TArray<std::uint8_t> Data{};
+    };
+
+    struct RuntimePaintableComponent_MulticastSyncCompressedChannelData
+    {
+        EPaintChannel Channel{EPaintChannel::Albedo};
+        std::uint8_t Pad_1[0x7]{};
+        TArray<std::uint8_t> CompressedData{};
+        std::int32_t UncompressedSize{0};
+        std::uint8_t Pad_1C[0x4]{};
+    };
+
     struct Controller_K2_GetPawn
     {
         void* ReturnValue{nullptr};
@@ -446,6 +474,13 @@ namespace meccha_sdk
     static_assert(sizeof(RuntimePaintRelayComponent_RelayStrokeBatchToServer) == 0x18, "RelayStrokeBatchToServer params layout mismatch");
     static_assert(offsetof(RuntimePaintRelayComponent_RelayPaintToServer, Stroke) == 0x08, "RelayPaintToServer Stroke offset mismatch");
     static_assert(offsetof(RuntimePaintRelayComponent_RelayStrokeBatchToServer, Batch) == 0x08, "RelayStrokeBatchToServer Batch offset mismatch");
+    static_assert(sizeof(RuntimePaintRelayComponent_RelayTextureSyncToServer) == 0x08, "RelayTextureSyncToServer params layout mismatch");
+    static_assert(sizeof(RuntimePaintRelayComponent_ServerRelayTextureSync) == 0x08, "ServerRelayTextureSync params layout mismatch");
+    static_assert(sizeof(RuntimePaintableComponent_MulticastSyncChannelData) == 0x18, "MulticastSyncChannelData params layout mismatch");
+    static_assert(offsetof(RuntimePaintableComponent_MulticastSyncChannelData, Data) == 0x08, "MulticastSyncChannelData Data offset mismatch");
+    static_assert(sizeof(RuntimePaintableComponent_MulticastSyncCompressedChannelData) == 0x20, "MulticastSyncCompressedChannelData params layout mismatch");
+    static_assert(offsetof(RuntimePaintableComponent_MulticastSyncCompressedChannelData, CompressedData) == 0x08, "MulticastSyncCompressedChannelData CompressedData offset mismatch");
+    static_assert(offsetof(RuntimePaintableComponent_MulticastSyncCompressedChannelData, UncompressedSize) == 0x18, "MulticastSyncCompressedChannelData UncompressedSize offset mismatch");
     static_assert(sizeof(Actor_K2_GetActorLocation) == 0x18, "K2_GetActorLocation params layout mismatch");
     static_assert(sizeof(KismetRenderingLibrary_CreateRenderTarget2D) == 0x30, "CreateRenderTarget2D params layout mismatch");
     static_assert(offsetof(KismetRenderingLibrary_CreateRenderTarget2D, Format) == 0x10, "CreateRenderTarget2D Format offset mismatch");

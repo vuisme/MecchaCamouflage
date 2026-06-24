@@ -791,6 +791,8 @@ namespace
         double atlas_weight{0.0};
         double screen_nx{0.5};
         double screen_ny{0.5};
+        double capture_nx{-1.0};
+        double capture_ny{-1.0};
         bool has_world_position{false};
         meccha_sdk::FVector world_position{};
         meccha_sdk::FVector normal{};
@@ -3205,9 +3207,15 @@ namespace
         std::uintptr_t relay_component{0};
         std::uintptr_t relay_stroke_batch_to_server_function{0};
         std::uintptr_t relay_paint_to_server_function{0};
+        std::uintptr_t relay_texture_sync_to_server_function{0};
+        std::uintptr_t server_relay_texture_sync_function{0};
         std::uintptr_t export_function{0};
         std::uintptr_t import_function{0};
         std::uintptr_t get_render_target_function{0};
+        std::uintptr_t request_full_texture_sync_function{0};
+        std::uintptr_t server_request_texture_sync_function{0};
+        std::uintptr_t multicast_sync_channel_data_function{0};
+        std::uintptr_t multicast_sync_compressed_channel_data_function{0};
         std::uintptr_t server_paint_batch_function{0};
         std::uintptr_t server_send_stroke_batch_function{0};
         std::uintptr_t server_send_paint_function{0};
@@ -3624,8 +3632,15 @@ namespace
                ",\"relay_component_class\":\"" + json_escape(ref.class_name(ctx.relay_component)) + "\"" +
                ",\"function_relay_stroke_batch_to_server_available\":" + std::string(json_bool(ctx.relay_stroke_batch_to_server_function != 0)) +
                ",\"function_relay_paint_to_server_available\":" + std::string(json_bool(ctx.relay_paint_to_server_function != 0)) +
+               ",\"function_relay_texture_sync_to_server_available\":" + std::string(json_bool(ctx.relay_texture_sync_to_server_function != 0)) +
+               ",\"function_server_relay_texture_sync_available\":" + std::string(json_bool(ctx.server_relay_texture_sync_function != 0)) +
                ",\"function_export_available\":" + std::string(json_bool(ctx.export_function != 0)) +
+               ",\"function_import_available\":" + std::string(json_bool(ctx.import_function != 0)) +
                ",\"function_get_render_target_available\":" + std::string(json_bool(ctx.get_render_target_function != 0)) +
+               ",\"function_request_full_texture_sync_available\":" + std::string(json_bool(ctx.request_full_texture_sync_function != 0)) +
+               ",\"function_server_request_texture_sync_available\":" + std::string(json_bool(ctx.server_request_texture_sync_function != 0)) +
+               ",\"function_multicast_sync_channel_data_available\":" + std::string(json_bool(ctx.multicast_sync_channel_data_function != 0)) +
+               ",\"function_multicast_sync_compressed_channel_data_available\":" + std::string(json_bool(ctx.multicast_sync_compressed_channel_data_function != 0)) +
                ",\"function_server_paint_batch_available\":" + std::string(json_bool(ctx.server_paint_batch_function != 0)) +
                ",\"function_server_send_stroke_batch_available\":" + std::string(json_bool(ctx.server_send_stroke_batch_function != 0)) +
                ",\"function_server_send_paint_available\":" + std::string(json_bool(ctx.server_send_paint_function != 0)) +
@@ -3633,14 +3648,21 @@ namespace
                ",\"function_paint_at_uv_with_brush_available\":" + std::string(json_bool(ctx.paint_at_uv_with_brush_function != 0)) +
                ",\"function_relay_stroke_batch_to_server\":\"" + hex_address(ctx.relay_stroke_batch_to_server_function) + "\"" +
                ",\"function_relay_paint_to_server\":\"" + hex_address(ctx.relay_paint_to_server_function) + "\"" +
+               ",\"function_relay_texture_sync_to_server\":\"" + hex_address(ctx.relay_texture_sync_to_server_function) + "\"" +
+               ",\"function_server_relay_texture_sync\":\"" + hex_address(ctx.server_relay_texture_sync_function) + "\"" +
                ",\"function_export\":\"" + hex_address(ctx.export_function) + "\"" +
+               ",\"function_import\":\"" + hex_address(ctx.import_function) + "\"" +
                ",\"function_get_render_target\":\"" + hex_address(ctx.get_render_target_function) + "\"" +
+               ",\"function_request_full_texture_sync\":\"" + hex_address(ctx.request_full_texture_sync_function) + "\"" +
+               ",\"function_server_request_texture_sync\":\"" + hex_address(ctx.server_request_texture_sync_function) + "\"" +
+               ",\"function_multicast_sync_channel_data\":\"" + hex_address(ctx.multicast_sync_channel_data_function) + "\"" +
+               ",\"function_multicast_sync_compressed_channel_data\":\"" + hex_address(ctx.multicast_sync_compressed_channel_data_function) + "\"" +
                ",\"function_server_paint_batch\":\"" + hex_address(ctx.server_paint_batch_function) + "\"" +
                ",\"function_server_send_stroke_batch\":\"" + hex_address(ctx.server_send_stroke_batch_function) + "\"" +
                ",\"function_server_send_paint\":\"" + hex_address(ctx.server_send_paint_function) + "\"" +
                ",\"function_server_paint\":\"" + hex_address(ctx.server_paint_function) + "\"" +
                ",\"function_paint_at_uv_with_brush\":\"" + hex_address(ctx.paint_at_uv_with_brush_function) + "\"" +
-               ",\"param_schema\":\"FPaintStroke{Uv@0,WorldPosition@16,bHasWorldPosition@40,BrushSettings@104,ChannelData@144,TargetChannel@176};ServerPaintBatch{Batch@0};PaintAtUVWithBrush{Uv@0,ChannelData@16,BrushSettings@48,Channel@88}\"" +
+               ",\"param_schema\":\"FPaintStroke{Uv@0,WorldPosition@16,bHasWorldPosition@40,BrushSettings@104,ChannelData@144,TargetChannel@176};ServerPaintBatch{Batch@0};PaintAtUVWithBrush{Uv@0,ChannelData@16,BrushSettings@48,Channel@88};RelayTextureSyncToServer{PaintComponent@0};MulticastSyncChannelData{Channel@0,Data@8}\"" +
                std::string(",\"replication\":\"component_server_paint_batch\"") +
                ",\"multiplayer_replicated\":true";
     }
@@ -3760,10 +3782,16 @@ namespace
         {
             ctx.relay_stroke_batch_to_server_function = ref.find_function(ctx.relay_component, "RelayStrokeBatchToServer");
             ctx.relay_paint_to_server_function = ref.find_function(ctx.relay_component, "RelayPaintToServer");
+            ctx.relay_texture_sync_to_server_function = ref.find_function(ctx.relay_component, "RelayTextureSyncToServer");
+            ctx.server_relay_texture_sync_function = ref.find_function(ctx.relay_component, "ServerRelayTextureSync");
         }
         ctx.export_function = ref.find_function(ctx.component, "ExportChannelToBytes");
         ctx.import_function = ref.find_function(ctx.component, "ImportChannelFromBytes");
         ctx.get_render_target_function = ref.find_function(ctx.component, "GetRenderTarget");
+        ctx.request_full_texture_sync_function = ref.find_function(ctx.component, "RequestFullTextureSync");
+        ctx.server_request_texture_sync_function = ref.find_function(ctx.component, "ServerRequestTextureSync");
+        ctx.multicast_sync_channel_data_function = ref.find_function(ctx.component, "MulticastSyncChannelData");
+        ctx.multicast_sync_compressed_channel_data_function = ref.find_function(ctx.component, "MulticastSyncCompressedChannelData");
         ctx.server_paint_batch_function = ref.find_function(ctx.component, "ServerPaintBatch");
         ctx.server_send_stroke_batch_function = ref.find_function(ctx.component, "ServerSendStrokeBatch");
         ctx.server_send_paint_function = ref.find_function(ctx.component, "ServerSendPaint");
@@ -3805,14 +3833,16 @@ namespace
         int owner_unknown_accepted{0};
         int owner_mismatch_rejected{0};
         int min_front_hits{2048};
-        int target_front_hits{80000};
+        int target_front_hits{220000};
+        int target_unique_atlas_texels{500000};
+        int unique_atlas_texels{0};
         int coarse_grid_x{96};
         int coarse_grid_y{72};
-        int refine_grid_x{320};
-        int refine_grid_y{260};
+        int refine_grid_x{640};
+        int refine_grid_y{520};
         int coarse_seeds{0};
         int refine_seeds{0};
-        int hard_attempt_budget{160000};
+        int hard_attempt_budget{600000};
         int adaptive_passes{0};
         int adaptive_seeds{0};
         int adaptive_attempts{0};
@@ -3885,6 +3915,7 @@ namespace
         bool camera_location_used{false};
         bool camera_rotation_used{false};
         bool camera_fov_used{false};
+        std::string camera_manager_source{"function:GetPlayerCameraManager"};
         std::string camera_location_source{"deproject_center"};
         std::string camera_rotation_source{"deproject_center_ray"};
         std::string camera_fov_source{"deproject_horizontal"};
@@ -3892,9 +3923,21 @@ namespace
         meccha_sdk::FVector capture_direction{};
         int project_attempts{0};
         int project_success{0};
+        int project_failed{0};
+        int project_out_of_view{0};
+        double project_delta_sum_px{0.0};
+        double project_delta_max_px{0.0};
         int read_attempts{0};
         int read_success{0};
         int missing_color{0};
+        double raw_rgb_min{0.0};
+        double raw_rgb_max{0.0};
+        double raw_rgb_avg{0.0};
+        double raw_luma_range{0.0};
+        int raw_whiteish_samples{0};
+        double resolved_rgb_delta_avg{0.0};
+        double resolved_rgb_delta_max{0.0};
+        int resolved_rgb_delta_samples{0};
         double rgb_min{0.0};
         double rgb_max{0.0};
         double rgb_avg{0.0};
@@ -4188,6 +4231,8 @@ namespace
                ",\"front_mapping_required\":\"game_surface_trace_world_position\"" +
                ",\"front_native_min_surface_samples\":" + std::to_string(native_front.min_front_hits) +
                ",\"front_native_target_surface_samples\":" + std::to_string(native_front.target_front_hits) +
+               ",\"front_native_target_unique_atlas_texels\":" + std::to_string(native_front.target_unique_atlas_texels) +
+               ",\"front_native_unique_atlas_texels\":" + std::to_string(native_front.unique_atlas_texels) +
                ",\"front_native_coarse_grid_x\":" + std::to_string(native_front.coarse_grid_x) +
                ",\"front_native_coarse_grid_y\":" + std::to_string(native_front.coarse_grid_y) +
                ",\"front_native_refine_grid_x\":" + std::to_string(native_front.refine_grid_x) +
@@ -4735,11 +4780,13 @@ namespace
                                   100,
                                   collect_elapsed_ms(),
                                   "\"front_hits\":" + std::to_string(result.samples.size()) +
+                                      ",\"unique_atlas_texels\":" + std::to_string(result.unique_atlas_texels) +
                                       ",\"deproject_calls\":" + std::to_string(result.deproject_calls) +
                                       ",\"hit_test_calls\":" + std::to_string(result.hit_test_calls) +
                                       ",\"sampling_backend\":\"" + json_escape(result.sampling_backend) + "\"" +
                                       ",\"hard_attempt_budget\":" + std::to_string(hard_attempts) +
-                                      ",\"target_front_hits\":" + std::to_string(target_samples));
+                                      ",\"target_front_hits\":" + std::to_string(target_samples) +
+                                      ",\"target_unique_atlas_texels\":" + std::to_string(result.target_unique_atlas_texels));
         };
         std::unordered_set<std::uint64_t> unique_texels{};
         unique_texels.reserve(static_cast<std::size_t>(target_samples) * 2U);
@@ -4914,6 +4961,7 @@ namespace
                 ++result.duplicate_uv;
                 return false;
             }
+            result.unique_atlas_texels = static_cast<int>(unique_texels.size());
 
             FrontSample sample{};
             sample.u = clamp01(hit.u);
@@ -5135,6 +5183,76 @@ namespace
                ",\"" + name + "_failure\":\"" + json_escape(channel.failure) + "\"";
     }
 
+    struct ChannelRgbStats
+    {
+        bool ok{false};
+        double min{0.0};
+        double max{0.0};
+        double avg{0.0};
+    };
+
+    auto sdk_channel_rgb_stats(const ChannelBuffer& channel) -> ChannelRgbStats
+    {
+        ChannelRgbStats stats{};
+        if (!channel.ok || channel.bytes.empty())
+        {
+            return stats;
+        }
+        const int bpp = std::max(1, channel.bytes_per_pixel);
+        const std::size_t step = static_cast<std::size_t>(bpp);
+        double sum = 0.0;
+        std::size_t count = 0;
+        for (std::size_t offset = 0; offset < channel.bytes.size(); offset += step)
+        {
+            if (bpp >= 3 && offset + 2 < channel.bytes.size())
+            {
+                const double r = static_cast<double>(channel.bytes[offset + 0]) / 255.0;
+                const double g = static_cast<double>(channel.bytes[offset + 1]) / 255.0;
+                const double b = static_cast<double>(channel.bytes[offset + 2]) / 255.0;
+                const double values[3]{r, g, b};
+                for (double value : values)
+                {
+                    if (!stats.ok)
+                    {
+                        stats.min = value;
+                        stats.max = value;
+                        stats.ok = true;
+                    }
+                    stats.min = std::min(stats.min, value);
+                    stats.max = std::max(stats.max, value);
+                    sum += value;
+                    ++count;
+                }
+            }
+            else
+            {
+                const double value = static_cast<double>(channel.bytes[offset]) / 255.0;
+                if (!stats.ok)
+                {
+                    stats.min = value;
+                    stats.max = value;
+                    stats.ok = true;
+                }
+                stats.min = std::min(stats.min, value);
+                stats.max = std::max(stats.max, value);
+                sum += value;
+                ++count;
+            }
+        }
+        stats.avg = count > 0 ? sum / static_cast<double>(count) : 0.0;
+        return stats;
+    }
+
+    auto sdk_channel_rgb_stats_metadata(const char* prefix, const ChannelBuffer& channel) -> std::string
+    {
+        const auto stats = sdk_channel_rgb_stats(channel);
+        std::string name(prefix);
+        return ",\"" + name + "_rgb_stats_ok\":" + json_bool(stats.ok) +
+               ",\"" + name + "_rgb_min\":" + std::to_string(stats.min) +
+               ",\"" + name + "_rgb_avg\":" + std::to_string(stats.avg) +
+               ",\"" + name + "_rgb_max\":" + std::to_string(stats.max);
+    }
+
     struct SdkReplicatedStats
     {
         int requested{0};
@@ -5168,6 +5286,16 @@ namespace
         brush.BlendMode = meccha_sdk::EPaintBlendMode::Normal;
         brush.Rotation = 0.0f;
         return brush;
+    }
+
+    auto sdk_srgb_to_linear_unit(double value) -> double
+    {
+        const auto srgb = clamp01(value);
+        if (srgb <= 0.04045)
+        {
+            return srgb / 12.92;
+        }
+        return std::pow((srgb + 0.055) / 1.055, 2.4);
     }
 
     auto sdk_make_channel(double r,
@@ -5334,11 +5462,60 @@ namespace
         return true;
     }
 
+    auto sdk_call_relay_texture_sync_rpc(const SdkContext& ctx,
+                                         std::uintptr_t function,
+                                         const char* unavailable_stage,
+                                         std::string& failure) -> bool
+    {
+        if (!function)
+        {
+            failure = unavailable_stage;
+            return false;
+        }
+        if (!live_uobject(ctx.relay_component) || !live_uobject(ctx.component))
+        {
+            failure = "relay_or_paint_component_unavailable";
+            return false;
+        }
+        meccha_sdk::RuntimePaintRelayComponent_RelayTextureSyncToServer params{};
+        params.PaintComponent = reinterpret_cast<void*>(ctx.component);
+        if (!process_event(ctx.relay_component, function, reinterpret_cast<std::uint8_t*>(&params), failure))
+        {
+            return false;
+        }
+        return true;
+    }
+
+    auto sdk_call_component_no_param_rpc(const SdkContext& ctx,
+                                         std::uintptr_t function,
+                                         const char* unavailable_stage,
+                                         std::string& failure) -> bool
+    {
+        if (!function)
+        {
+            failure = unavailable_stage;
+            return false;
+        }
+        if (!live_uobject(ctx.component))
+        {
+            failure = "paint_component_unavailable";
+            return false;
+        }
+        std::uint8_t params[1]{};
+        if (!process_event(ctx.component, function, params, failure))
+        {
+            return false;
+        }
+        return true;
+    }
+
     template <typename ProgressCallback>
     auto sdk_dispatch_replicated_strokes_with_progress(const SdkContext& ctx,
                                                        const std::vector<meccha_sdk::FPaintStroke>& strokes,
                                                        SdkReplicatedStats& stats,
-                                                       ProgressCallback&& progress_callback) -> bool
+                                                       ProgressCallback&& progress_callback,
+                                                       int batch_limit_override = 0,
+                                                       int sleep_ms = 16) -> bool
     {
         stats.requested = static_cast<int>(strokes.size());
         if (strokes.empty())
@@ -5347,7 +5524,8 @@ namespace
         }
 
         const int raw_limit = safe_read<int>(ctx.component + meccha_sdk::FieldOffsets::RuntimePaintable_MaxReplicatedPaintStrokesPerTick, 24);
-        const auto batch_limit = static_cast<std::size_t>(std::max(1, std::min(raw_limit > 0 ? raw_limit : 24, 64)));
+        const int effective_limit = batch_limit_override > 0 ? batch_limit_override : (raw_limit > 0 ? raw_limit : 24);
+        const auto batch_limit = static_cast<std::size_t>(std::max(1, std::min(effective_limit, 256)));
         for (std::size_t offset = 0; offset < strokes.size(); offset += batch_limit)
         {
             const auto count = std::min(batch_limit, strokes.size() - offset);
@@ -5373,7 +5551,10 @@ namespace
                 }
                 return false;
             }
-            Sleep(16);
+            if (sleep_ms > 0)
+            {
+                Sleep(static_cast<DWORD>(sleep_ms));
+            }
         }
         return stats.server_sent == static_cast<int>(strokes.size());
     }
@@ -6537,6 +6718,7 @@ namespace
         }
         auto capture_location = center_ray.location;
         auto capture_direction = center_ray.direction;
+        bool deproject_fov_valid = false;
         const auto left_ray = sdk_deproject_screen_position(ref, ctx, 0.0, static_cast<double>(viewport_height) * 0.5);
         const auto right_ray = sdk_deproject_screen_position(ref, ctx, static_cast<double>(std::max(1, viewport_width - 1)), static_cast<double>(viewport_height) * 0.5);
         if (left_ray.ok && right_ray.ok)
@@ -6548,10 +6730,23 @@ namespace
             if (std::isfinite(fov) && fov >= 10.0 && fov <= 150.0)
             {
                 out.capture_fov = fov;
+                deproject_fov_valid = true;
             }
         }
         std::string camera_failure{};
         out.camera_manager = sdk_call_no_params_return_object(ref, ctx.controller, "GetPlayerCameraManager", camera_failure);
+        std::string camera_manager_source = "function:GetPlayerCameraManager";
+        if (!live_uobject(out.camera_manager) && ctx.controller)
+        {
+            const auto field_camera_manager = safe_read<std::uintptr_t>(
+                ctx.controller + meccha_sdk::FieldOffsets::PlayerController_PlayerCameraManager,
+                0);
+            if (live_uobject(field_camera_manager))
+            {
+                out.camera_manager = field_camera_manager;
+                camera_manager_source = "field:APlayerController.PlayerCameraManager@0x360";
+            }
+        }
         if (live_uobject(out.camera_manager))
         {
             meccha_sdk::FVector camera_location{};
@@ -6564,19 +6759,56 @@ namespace
             meccha_sdk::FRotator camera_rotation{};
             if (sdk_call_no_params_return_rotator(ref, out.camera_manager, "GetCameraRotation", camera_rotation))
             {
-                capture_direction = sdk_rotator_forward(camera_rotation);
-                out.camera_rotation_used = true;
-                out.camera_rotation_source = "player_camera_manager";
+                const auto camera_forward = sdk_rotator_forward(camera_rotation);
+                const auto center_forward = sdk_vec_normalize(center_ray.direction);
+                const auto dot = sdk_vec_dot(sdk_vec_normalize(camera_forward), center_forward);
+                if (std::isfinite(dot) && dot > 0.80)
+                {
+                    capture_direction = camera_forward;
+                    out.camera_rotation_used = true;
+                    out.camera_rotation_source = "player_camera_manager";
+                }
+                else
+                {
+                    out.camera_rotation_used = false;
+                    out.camera_rotation_source = "deproject_center_ray_rejected_player_camera_rotation";
+                }
             }
             double camera_fov = 0.0;
             if (sdk_call_no_params_return_number(ref, out.camera_manager, "GetFOVAngle", camera_fov) &&
                 std::isfinite(camera_fov) && camera_fov >= 10.0 && camera_fov <= 150.0)
             {
-                out.capture_fov = camera_fov;
-                out.camera_fov_used = true;
-                out.camera_fov_source = "player_camera_manager";
+                if (!deproject_fov_valid)
+                {
+                    out.capture_fov = camera_fov;
+                    out.camera_fov_used = true;
+                    out.camera_fov_source = "player_camera_manager";
+                }
+                else
+                {
+                    out.camera_fov_used = false;
+                    out.camera_fov_source = "deproject_horizontal_preferred_over_player_camera_manager";
+                }
             }
         }
+        if (!out.camera_rotation_used && ctx.controller)
+        {
+            const auto control_rotation = safe_read<meccha_sdk::FRotator>(
+                ctx.controller + meccha_sdk::FieldOffsets::Controller_ControlRotation,
+                meccha_sdk::FRotator{});
+            const auto control_forward = sdk_rotator_forward(control_rotation);
+            const auto center_forward = sdk_vec_normalize(center_ray.direction);
+            const auto dot = sdk_vec_dot(sdk_vec_normalize(control_forward), center_forward);
+            if (std::isfinite(control_forward.X) && std::isfinite(control_forward.Y) && std::isfinite(control_forward.Z) &&
+                (std::abs(control_forward.X) + std::abs(control_forward.Y) + std::abs(control_forward.Z)) > 0.001 &&
+                std::isfinite(dot) && dot > 0.80)
+            {
+                capture_direction = control_forward;
+                out.camera_rotation_used = true;
+                out.camera_rotation_source = "field:AController.ControlRotation@0x320";
+            }
+        }
+        out.camera_manager_source = camera_manager_source;
         out.capture_location = capture_location;
         out.capture_direction = sdk_vec_normalize(capture_direction);
         std::string failure{};
@@ -6638,15 +6870,60 @@ namespace
         double sum = 0.0;
         int channels = 0;
         bool initialized = false;
+        double raw_sum = 0.0;
+        int raw_channels = 0;
+        bool raw_initialized = false;
+        double resolved_delta_sum = 0.0;
+        double resolved_delta_max = 0.0;
+        int resolved_delta_samples = 0;
         for (const auto& surface : native_front.samples)
         {
             ++out.project_attempts;
-            const double sx = clamp01(surface.screen_nx) * static_cast<double>(viewport_width);
-            const double sy = clamp01(surface.screen_ny) * static_cast<double>(viewport_height);
+            const double original_sx = clamp01(surface.screen_nx) * static_cast<double>(viewport_width);
+            const double original_sy = clamp01(surface.screen_ny) * static_cast<double>(viewport_height);
+            double sx = original_sx;
+            double sy = original_sy;
+            if (surface.has_world_position)
+            {
+                double projected_x = 0.0;
+                double projected_y = 0.0;
+                if (sdk_project_world_to_screen(ref, ctx, surface.world_position, projected_x, projected_y))
+                {
+                    sx = projected_x;
+                    sy = projected_y;
+                    const auto dx = sx - original_sx;
+                    const auto dy = sy - original_sy;
+                    const auto delta = std::sqrt(dx * dx + dy * dy);
+                    out.project_delta_sum_px += delta;
+                    out.project_delta_max_px = std::max(out.project_delta_max_px, delta);
+                }
+                else
+                {
+                    ++out.project_failed;
+                    continue;
+                }
+            }
+            const bool outside = sx < 0.0 || sy < 0.0 ||
+                                 sx >= static_cast<double>(viewport_width) ||
+                                 sy >= static_cast<double>(viewport_height);
+            if (outside)
+            {
+                ++out.project_out_of_view;
+                continue;
+            }
             ++out.project_success;
             const auto px = std::max(0, std::min(out.width - 1, static_cast<int>(std::round(sx * capture_scale_x))));
             const auto py = std::max(0, std::min(out.height - 1, static_cast<int>(std::round(sy * capture_scale_y))));
-            projected.push_back(ProjectedFrontSample{surface, px, py, {}, false});
+            auto projected_surface = surface;
+            projected_surface.capture_nx = clamp01(sx / static_cast<double>(std::max(1, viewport_width)));
+            projected_surface.capture_ny = clamp01(sy / static_cast<double>(std::max(1, viewport_height)));
+            projected.push_back(ProjectedFrontSample{projected_surface, px, py, {}, false});
+        }
+        if (projected.empty())
+        {
+            out.failure = "front_capture_project_world_to_screen_failed";
+            sdk_call_no_params(ref, out.capture_actor, "K2_DestroyActor");
+            return out;
         }
 
         SdkBulkReadbackDiagnostics bulk_diagnostics{};
@@ -6793,14 +7070,46 @@ namespace
                 continue;
             }
             const auto raw_color = sdk_apply_bulk_color_transform(bulk.pixels[pixel_index], best_transform);
+            const double raw_values[]{clamp01(raw_color.r), clamp01(raw_color.g), clamp01(raw_color.b)};
+            bool raw_whiteish = true;
+            for (const auto value : raw_values)
+            {
+                if (!raw_initialized)
+                {
+                    out.raw_rgb_min = value;
+                    out.raw_rgb_max = value;
+                    raw_initialized = true;
+                }
+                out.raw_rgb_min = std::min(out.raw_rgb_min, value);
+                out.raw_rgb_max = std::max(out.raw_rgb_max, value);
+                raw_sum += value;
+                ++raw_channels;
+                if (value < 0.97)
+                {
+                    raw_whiteish = false;
+                }
+            }
+            if (raw_whiteish)
+            {
+                ++out.raw_whiteish_samples;
+            }
             const auto floor_like = projected_sample.surface.floor_like;
-            const auto material_hint = sdk_infer_surface_material(raw_color, floor_like);
+            auto resolved_color = raw_color;
+            resolved_color.roughness = 0.65;
+            resolved_color.metallic = 0.0;
+            const auto resolved_delta = sdk_color_distance_rgb(raw_color, resolved_color);
+            if (std::isfinite(resolved_delta))
+            {
+                resolved_delta_sum += resolved_delta;
+                resolved_delta_max = std::max(resolved_delta_max, resolved_delta);
+                ++resolved_delta_samples;
+            }
             FrontSample sample = projected_sample.surface;
-            sample.r = clamp01(raw_color.r);
-            sample.g = clamp01(raw_color.g);
-            sample.b = clamp01(raw_color.b);
-            sample.metallic = clamp01(material_hint.metallic);
-            sample.roughness = clamp01(material_hint.roughness);
+            sample.r = clamp01(resolved_color.r);
+            sample.g = clamp01(resolved_color.g);
+            sample.b = clamp01(resolved_color.b);
+            sample.metallic = clamp01(resolved_color.metallic);
+            sample.roughness = clamp01(resolved_color.roughness);
             sample.radius = std::max(0.0015, std::min(0.0035, 2.5 / static_cast<double>(std::max(out.width, out.height))));
             sample.floor_like = floor_like;
             sample.atlas_priority = 11;
@@ -6833,6 +7142,11 @@ namespace
         }
         out.rgb_avg = channels > 0 ? sum / static_cast<double>(channels) : 0.0;
         out.luma_range = out.rgb_max - out.rgb_min;
+        out.raw_rgb_avg = raw_channels > 0 ? raw_sum / static_cast<double>(raw_channels) : 0.0;
+        out.raw_luma_range = out.raw_rgb_max - out.raw_rgb_min;
+        out.resolved_rgb_delta_avg = resolved_delta_samples > 0 ? resolved_delta_sum / static_cast<double>(resolved_delta_samples) : 0.0;
+        out.resolved_rgb_delta_max = resolved_delta_max;
+        out.resolved_rgb_delta_samples = resolved_delta_samples;
         out.uniform = out.samples.size() > 0 && out.luma_range < 0.006;
         out.all_whiteish = out.samples.size() > 0 && out.whiteish_samples == static_cast<int>(out.samples.size());
         out.ok = static_cast<int>(out.samples.size()) >= native_front.min_front_hits && !out.uniform && !out.all_whiteish;
@@ -6867,6 +7181,7 @@ namespace
                ",\"front_capture_hide_component_called\":" + std::string(json_bool(capture.hide_component_called)) +
                ",\"front_capture_scene_called\":" + std::string(json_bool(capture.capture_scene_called)) +
                ",\"capture_camera_manager\":\"" + hex_address(capture.camera_manager) + "\"" +
+               ",\"capture_camera_manager_source\":\"" + json_escape(capture.camera_manager_source) + "\"" +
                ",\"capture_camera_location_used\":" + std::string(json_bool(capture.camera_location_used)) +
                ",\"capture_camera_rotation_used\":" + std::string(json_bool(capture.camera_rotation_used)) +
                ",\"capture_camera_fov_used\":" + std::string(json_bool(capture.camera_fov_used)) +
@@ -6881,9 +7196,21 @@ namespace
                ",\"capture_direction_z\":" + std::to_string(capture.capture_direction.Z) +
                ",\"front_capture_project_attempts\":" + std::to_string(capture.project_attempts) +
                ",\"front_capture_project_success\":" + std::to_string(capture.project_success) +
+               ",\"front_capture_project_failed\":" + std::to_string(capture.project_failed) +
+               ",\"front_capture_project_out_of_view\":" + std::to_string(capture.project_out_of_view) +
+               ",\"front_capture_project_delta_avg_px\":" + std::to_string(capture.project_success > 0 ? capture.project_delta_sum_px / static_cast<double>(capture.project_success) : 0.0) +
+               ",\"front_capture_project_delta_max_px\":" + std::to_string(capture.project_delta_max_px) +
                ",\"front_capture_read_attempts\":" + std::to_string(capture.read_attempts) +
                ",\"front_capture_read_success\":" + std::to_string(capture.read_success) +
                ",\"front_capture_missing_color\":" + std::to_string(capture.missing_color) +
+               ",\"front_raw_rgb_min\":" + std::to_string(capture.raw_rgb_min) +
+               ",\"front_raw_rgb_max\":" + std::to_string(capture.raw_rgb_max) +
+               ",\"front_raw_rgb_avg\":" + std::to_string(capture.raw_rgb_avg) +
+               ",\"front_raw_luma_range\":" + std::to_string(capture.raw_luma_range) +
+               ",\"front_raw_rgb_whiteish_samples\":" + std::to_string(capture.raw_whiteish_samples) +
+               ",\"front_resolved_rgb_delta_avg\":" + std::to_string(capture.resolved_rgb_delta_avg) +
+               ",\"front_resolved_rgb_delta_max\":" + std::to_string(capture.resolved_rgb_delta_max) +
+               ",\"front_resolved_rgb_delta_samples\":" + std::to_string(capture.resolved_rgb_delta_samples) +
                ",\"front_rgb_min\":" + std::to_string(capture.rgb_min) +
                ",\"front_rgb_max\":" + std::to_string(capture.rgb_max) +
                ",\"front_rgb_avg\":" + std::to_string(capture.rgb_avg) +
@@ -6941,6 +7268,7 @@ namespace
         int height{0};
         int direct_texels{0};
         int filled_by_extension{0};
+        int filled_by_full_nearest{0};
         int preserved_original{0};
         int source_samples{0};
         int worker_threads{1};
@@ -7373,64 +7701,119 @@ namespace
             }
         }
 
+        std::vector<Texel> extended_texels = texels;
         std::vector<std::uint8_t> painted_mask = direct_mask;
-        constexpr int fill_radius = 6;
-        auto extended_texels = texels;
-        const auto fill_workers = sdk_worker_count_for_items(pixels);
-        std::vector<int> fill_counts(static_cast<std::size_t>(fill_workers), 0);
-        sdk_parallel_ranges(pixels, [&](std::size_t begin, std::size_t end, unsigned worker) {
-            auto& local_filled = fill_counts[static_cast<std::size_t>(worker)];
-            for (std::size_t index = begin; index < end; ++index)
-            {
-                const auto y = static_cast<int>(index / static_cast<std::size_t>(width));
-                const auto x = static_cast<int>(index - static_cast<std::size_t>(y * width));
-                if (direct_mask[index])
+        constexpr bool kEnableAtlasGapFill = false;
+        if constexpr (kEnableAtlasGapFill)
+        {
+            constexpr int front_gap_fill_radius = 6;
+            std::vector<int> extension_counts(static_cast<std::size_t>(std::max(1, static_cast<int>(sdk_worker_count_for_items(pixels)))), 0);
+            sdk_parallel_ranges(pixels, [&](std::size_t begin, std::size_t end, unsigned worker) {
+                auto& local_filled = extension_counts[static_cast<std::size_t>(worker)];
+                for (std::size_t index = begin; index < end; ++index)
                 {
-                    continue;
-                }
-                int best_distance = fill_radius * fill_radius + 1;
-                int best_priority = -1;
-                std::size_t best_index = static_cast<std::size_t>(-1);
-                for (int dy = -fill_radius; dy <= fill_radius; ++dy)
-                {
-                    for (int dx = -fill_radius; dx <= fill_radius; ++dx)
+                    if (direct_mask[index])
                     {
-                        const auto sx = x + dx;
+                        continue;
+                    }
+                    const auto y = static_cast<int>(index / static_cast<std::size_t>(width));
+                    const auto x = static_cast<int>(index - static_cast<std::size_t>(y * width));
+                    int best_distance_sq = front_gap_fill_radius * front_gap_fill_radius + 1;
+                    int best_priority = -1;
+                    std::size_t best_index = static_cast<std::size_t>(-1);
+                    for (int dy = -front_gap_fill_radius; dy <= front_gap_fill_radius; ++dy)
+                    {
                         const auto sy = y + dy;
-                        const auto dist = dx * dx + dy * dy;
-                        if (sx < 0 || sy < 0 || sx >= width || sy >= height || dist > fill_radius * fill_radius)
+                        if (sy < 0 || sy >= height)
                         {
                             continue;
                         }
-                        const auto source_index = static_cast<std::size_t>(sy * width + sx);
-                        if (!direct_mask[source_index] || texels[source_index].weight <= 0.000001)
+                        for (int dx = -front_gap_fill_radius; dx <= front_gap_fill_radius; ++dx)
                         {
-                            continue;
-                        }
-                        const auto priority = texels[source_index].priority;
-                        if (dist < best_distance ||
-                            (dist == best_distance && priority > best_priority) ||
-                            (dist == best_distance && priority == best_priority && source_index < best_index))
-                        {
-                            best_distance = dist;
-                            best_priority = priority;
-                            best_index = source_index;
+                            const auto sx = x + dx;
+                            if (sx < 0 || sx >= width)
+                            {
+                                continue;
+                            }
+                            const auto distance_sq = dx * dx + dy * dy;
+                            if (distance_sq > front_gap_fill_radius * front_gap_fill_radius)
+                            {
+                                continue;
+                            }
+                            const auto source_index = static_cast<std::size_t>(sy * width + sx);
+                            if (!direct_mask[source_index] || texels[source_index].weight <= 0.000001)
+                            {
+                                continue;
+                            }
+                            const auto priority = texels[source_index].priority;
+                            if (priority > best_priority ||
+                                (priority == best_priority && distance_sq < best_distance_sq))
+                            {
+                                best_priority = priority;
+                                best_distance_sq = distance_sq;
+                                best_index = source_index;
+                            }
                         }
                     }
+                    if (best_index != static_cast<std::size_t>(-1))
+                    {
+                        extended_texels[index] = texels[best_index];
+                        painted_mask[index] = 1;
+                        ++local_filled;
+                    }
                 }
-                if (best_index == static_cast<std::size_t>(-1))
+            });
+            for (const auto count : extension_counts)
+            {
+                out.stats.filled_by_extension += count;
+            }
+            int full_nearest_filled = 0;
+            std::vector<std::size_t> fill_queue{};
+            fill_queue.reserve(pixels);
+            for (std::size_t index = 0; index < pixels; ++index)
+            {
+                if (painted_mask[index] && index < extended_texels.size() && extended_texels[index].weight > 0.000001)
+                {
+                    fill_queue.push_back(index);
+                }
+            }
+            for (std::size_t head = 0; head < fill_queue.size(); ++head)
+            {
+                const auto source_index = fill_queue[head];
+                if (source_index >= extended_texels.size() || extended_texels[source_index].weight <= 0.000001)
                 {
                     continue;
                 }
-                extended_texels[index] = texels[best_index];
-                painted_mask[index] = 1;
-                ++local_filled;
+                const auto y = static_cast<int>(source_index / static_cast<std::size_t>(width));
+                const auto x = static_cast<int>(source_index - static_cast<std::size_t>(y * width));
+                for (int dy = -1; dy <= 1; ++dy)
+                {
+                    for (int dx = -1; dx <= 1; ++dx)
+                    {
+                        if (dx == 0 && dy == 0)
+                        {
+                            continue;
+                        }
+                        const auto nx = x + dx;
+                        const auto ny = y + dy;
+                        if (nx < 0 || ny < 0 || nx >= width || ny >= height)
+                        {
+                            continue;
+                        }
+                        const auto target_index = static_cast<std::size_t>(ny * width + nx);
+                        if (target_index >= painted_mask.size() || painted_mask[target_index])
+                        {
+                            continue;
+                        }
+                        extended_texels[target_index] = extended_texels[source_index];
+                        painted_mask[target_index] = 1;
+                        fill_queue.push_back(target_index);
+                        ++full_nearest_filled;
+                    }
+                }
             }
-        });
-        texels.swap(extended_texels);
-        for (const auto count : fill_counts)
-        {
-            out.stats.filled_by_extension += count;
+            out.stats.filled_by_extension += full_nearest_filled;
+            out.stats.filled_by_full_nearest = full_nearest_filled;
         }
 
         out.albedo = before_albedo.bytes;
@@ -7469,19 +7852,19 @@ namespace
             auto& local_preserved = preserved_counts[static_cast<std::size_t>(worker)];
             for (std::size_t index = begin; index < end; ++index)
             {
-                if (!out.painted_mask[index] || texels[index].weight <= 0.000001)
+                if (!out.painted_mask[index] || extended_texels[index].weight <= 0.000001)
                 {
                     ++local_preserved;
                     continue;
                 }
-                const auto inv = 1.0 / texels[index].weight;
+                const auto inv = 1.0 / extended_texels[index].weight;
                 const auto offset = index * 4;
-                out.albedo[offset + 0] = sdk_byte_from_unit(texels[index].r * inv);
-                out.albedo[offset + 1] = sdk_byte_from_unit(texels[index].g * inv);
-                out.albedo[offset + 2] = sdk_byte_from_unit(texels[index].b * inv);
+                out.albedo[offset + 0] = sdk_byte_from_unit(clamp01(extended_texels[index].r * inv));
+                out.albedo[offset + 1] = sdk_byte_from_unit(clamp01(extended_texels[index].g * inv));
+                out.albedo[offset + 2] = sdk_byte_from_unit(clamp01(extended_texels[index].b * inv));
                 out.albedo[offset + 3] = before_albedo.bytes[offset + 3];
-                write_scalar(out.metallic, before_metallic.bytes_per_pixel, index, sdk_byte_from_unit(texels[index].metallic * inv));
-                write_scalar(out.roughness, before_roughness.bytes_per_pixel, index, sdk_byte_from_unit(texels[index].roughness * inv));
+                write_scalar(out.metallic, before_metallic.bytes_per_pixel, index, sdk_byte_from_unit(extended_texels[index].metallic * inv));
+                write_scalar(out.roughness, before_roughness.bytes_per_pixel, index, sdk_byte_from_unit(extended_texels[index].roughness * inv));
             }
         });
         for (const auto count : preserved_counts)
@@ -7505,10 +7888,14 @@ namespace
                ",\"srgb\":true" +
                ",\"direct_texels\":" + std::to_string(atlas.stats.direct_texels) +
                ",\"filled_by_extension\":" + std::to_string(atlas.stats.filled_by_extension) +
+               ",\"filled_by_full_nearest\":" + std::to_string(atlas.stats.filled_by_full_nearest) +
                ",\"preserved_original\":" + std::to_string(atlas.stats.preserved_original) +
                ",\"direct_texel_ratio\":" + std::to_string(static_cast<double>(atlas.stats.direct_texels) / pixels) +
                ",\"filled_by_extension_ratio\":" + std::to_string(static_cast<double>(atlas.stats.filled_by_extension) / pixels) +
+               ",\"filled_by_full_nearest_ratio\":" + std::to_string(static_cast<double>(atlas.stats.filled_by_full_nearest) / pixels) +
                ",\"preserved_original_ratio\":" + std::to_string(static_cast<double>(atlas.stats.preserved_original) / pixels) +
+               ",\"gap_fill_disabled\":true" +
+               ",\"gap_fill_mode\":\"direct_texels_only_preserve_original\"" +
                ",\"atlas_source_samples\":" + std::to_string(atlas.stats.source_samples) +
                ",\"atlas_hash\":\"" + std::to_string(atlas.hash) + "\"" +
                ",\"atlas_metallic_hash\":\"" + std::to_string(atlas.metallic_hash) + "\"" +
@@ -7637,12 +8024,12 @@ namespace
             }
         };
         auto push_stroke = [&](int x, int y, int size, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
-            const auto radius_uv = std::max(1.0 / static_cast<double>(std::max(width, height)),
-                                            (static_cast<double>(size) * 0.62) / static_cast<double>(std::max(width, height)));
+            const auto radius_uv = std::max(0.75 / static_cast<double>(std::max(width, height)),
+                                            (static_cast<double>(size) * 0.45) / static_cast<double>(std::max(width, height)));
             auto brush = sdk_copy_current_brush(ctx, radius_uv);
-            const auto channel = sdk_make_channel(static_cast<double>(r) / 255.0,
-                                                  static_cast<double>(g) / 255.0,
-                                                  static_cast<double>(b) / 255.0,
+            const auto channel = sdk_make_channel(sdk_srgb_to_linear_unit(static_cast<double>(r) / 255.0),
+                                                  sdk_srgb_to_linear_unit(static_cast<double>(g) / 255.0),
+                                                  sdk_srgb_to_linear_unit(static_cast<double>(b) / 255.0),
                                                   0.0,
                                                   0.65,
                                                   meccha_sdk::EPaintChannelApplyMode::Override);
@@ -7661,7 +8048,7 @@ namespace
             else if (size >= 2) ++plan.merged_2;
             else ++plan.singles;
         };
-        const int block_sizes[]{32, 16, 8, 4, 2, 1};
+        const int block_sizes[]{2, 1};
         for (int y = 0; y < height; ++y)
         {
             for (int x = 0; x < width; ++x)
@@ -7713,6 +8100,9 @@ namespace
                ",\"stroke_merged_2\":" + std::to_string(plan.merged_2) +
                ",\"stroke_singles\":" + std::to_string(plan.singles) +
                ",\"merge_error_max\":" + std::to_string(plan.merge_error_max) +
+               ",\"stroke_color_space\":\"srgb_to_linear_flinearcolor\"" +
+               ",\"stroke_radius_factor\":0.45" +
+               ",\"stroke_block_sizes\":\"2,1\"" +
                ",\"atlas_stroke_cap_exceeded\":" + std::string(json_bool(plan.cap_exceeded)) +
                ",\"atlas_stroke_failure\":\"" + json_escape(plan.failure) + "\"";
     }
@@ -7975,9 +8365,9 @@ namespace
         for (const auto& sample : samples)
         {
             const auto brush = sdk_copy_current_brush(ctx, sample.radius);
-            const auto channel = sdk_make_channel(sample.r,
-                                                  sample.g,
-                                                  sample.b,
+            const auto channel = sdk_make_channel(sdk_srgb_to_linear_unit(sample.r),
+                                                  sdk_srgb_to_linear_unit(sample.g),
+                                                  sdk_srgb_to_linear_unit(sample.b),
                                                   0.0,
                                                   0.65,
                                                   meccha_sdk::EPaintChannelApplyMode::AlphaBlend);
@@ -8061,32 +8451,35 @@ namespace
         const bool is_probe = request.find("\"type\":\"sdk_probe\"") != std::string::npos;
         const bool is_deep_probe = request.find("\"type\":\"sdk_deep_probe\"") != std::string::npos ||
                                    request.find("\"native_apply_mode\":\"sdk_deep_probe_only\"") != std::string::npos;
-        const bool legacy_diagnostic_import = request.find("\"native_apply_mode\":\"texture_import_diagnostic\"") != std::string::npos ||
-                                              request.find("\"route\":\"f10_texture_import_diagnostic\"") != std::string::npos;
-        const bool front_texture_import = request.find("\"native_apply_mode\":\"front_metallic_texture_import_diagnostic\"") != std::string::npos ||
-                                          request.find("\"route\":\"f10_front_metallic_texture_import_diagnostic\"") != std::string::npos ||
-                                          request.find("\"native_apply_mode\":\"metallic_base_then_front_texture_import_diagnostic\"") != std::string::npos ||
-                                          request.find("\"route\":\"f10_metallic_base_then_front_texture_import_diagnostic\"") != std::string::npos;
-        const bool strict_38923_front_texture_import = request.find("\"native_apply_mode\":\"metallic_base_then_front_texture_import_diagnostic\"") != std::string::npos ||
-                                                       request.find("\"route\":\"f10_metallic_base_then_front_texture_import_diagnostic\"") != std::string::npos;
-        const bool diagnostic_import = legacy_diagnostic_import || front_texture_import;
+        const bool legacy_diagnostic_import = false;
+        const bool texture_sync_probe = request.find("\"native_apply_mode\":\"texture_sync_strict_probe\"") != std::string::npos ||
+                                        request.find("\"route\":\"f10_texture_sync_strict_probe\"") != std::string::npos;
+        const bool color_transfer_probe = false;
+        const bool front_texture_import = texture_sync_probe;
+        const bool strict_38923_front_texture_import = texture_sync_probe;
+        const bool diagnostic_import = texture_sync_probe;
         const bool full_atlas_stream = request.find("\"native_apply_mode\":\"texture_atlas_paint_api_stream\"") != std::string::npos ||
                                        request.find("\"route\":\"f10_texture_atlas_paint_api_stream\"") != std::string::npos;
+        const bool front_atlas_paint_stream = request.find("\"native_apply_mode\":\"front_atlas_paint_stream\"") != std::string::npos ||
+                                              request.find("\"route\":\"f10_front_atlas_paint_stream\"") != std::string::npos;
+        const bool front_sample_paint_stream = request.find("\"native_apply_mode\":\"front_sample_paint_stream\"") != std::string::npos ||
+                                               request.find("\"route\":\"f10_front_sample_paint_stream\"") != std::string::npos;
         const bool front_metallic_texture_stream = request.find("\"native_apply_mode\":\"front_metallic_texture_paint_stream\"") != std::string::npos ||
                                                    request.find("\"route\":\"f10_front_metallic_texture_paint_stream\"") != std::string::npos;
         const bool cpu_mesh_raycast_route = request.find("\"native_apply_mode\":\"cpu_mesh_raycast\"") != std::string::npos ||
                                             request.find("\"route\":\"f10_cpu_mesh_raycast\"") != std::string::npos;
         const bool cpu_mesh_probe_only = request.find("\"native_apply_mode\":\"cpu_mesh_probe_only\"") != std::string::npos ||
                                          request.find("\"route\":\"f10_cpu_mesh_probe_only\"") != std::string::npos;
-        const bool cpu_mesh_texture_import = request.find("\"native_apply_mode\":\"cpu_mesh_texture_import_diagnostic\"") != std::string::npos ||
-                                             request.find("\"route\":\"f10_cpu_mesh_texture_import_diagnostic\"") != std::string::npos;
+        const bool cpu_mesh_texture_import = false;
         const bool cpu_mesh_texture_stream = request.find("\"native_apply_mode\":\"cpu_mesh_texture_paint_stream\"") != std::string::npos ||
                                              request.find("\"route\":\"f10_cpu_mesh_texture_paint_stream\"") != std::string::npos;
         const bool cpu_mesh_route = cpu_mesh_raycast_route || cpu_mesh_probe_only || cpu_mesh_texture_import || cpu_mesh_texture_stream;
-        const bool front_metallic_texture_route = front_texture_import || front_metallic_texture_stream ||
-                                                  (!legacy_diagnostic_import && !full_atlas_stream);
-        const std::string route_name = diagnostic_import ? "sdk_texture_import_diagnostic" :
-                                       (full_atlas_stream ? "sdk_texture_atlas_paint_api_stream" : "front_metallic_texture_paint_stream");
+        const bool front_metallic_texture_route = front_metallic_texture_stream;
+        const bool front_paint_route = front_atlas_paint_stream || front_sample_paint_stream || front_metallic_texture_route;
+        const std::string route_name = texture_sync_probe ? "texture_sync_strict_probe" :
+                                       (full_atlas_stream ? "sdk_texture_atlas_paint_api_stream" :
+                                        (front_atlas_paint_stream ? "front_atlas_paint_stream" :
+                                         (front_sample_paint_stream ? "front_sample_paint_stream" : "front_metallic_texture_paint_stream")));
         static volatile LONG paint_busy = 0;
         static volatile LONG dump_busy = 0;
         struct BusyGuard
@@ -8165,7 +8558,7 @@ namespace
             const auto stage = is_probe ? ctx.stage : std::string("sdk_context_unavailable");
             return response_json(false, stage.c_str(), 0, 1, ctx.message, metadata);
         }
-        if (!legacy_diagnostic_import && !front_texture_import && !is_probe && !is_deep_probe && !sdk_has_replicated_api(ctx))
+        if (!front_texture_import && !is_probe && !is_deep_probe && !sdk_has_replicated_api(ctx))
         {
             return response_json(false,
                                  "replicated_api_unavailable",
@@ -8411,11 +8804,13 @@ namespace
         }
 
         metadata += ",\"render_target_albedo\":\"" + hex_address(sdk_get_render_target(ctx, 0)) + "\"" +
-                    ",\"route\":\"" + (front_texture_import ? std::string("metallic_base_then_front_texture_import_diagnostic") : route_name) + "\"" +
+                    ",\"route\":\"" + (texture_sync_probe ? std::string("texture_sync_strict_probe") : route_name) + "\"" +
                     ",\"replication\":\"component_server_paint_batch\"" +
-                    ",\"replicated_paint_used\":" + json_bool(!legacy_diagnostic_import && !front_texture_import) +
-                    ",\"front_paint_stream_used\":" + json_bool(front_metallic_texture_stream) +
-                    ",\"front_texture_import_used\":" + json_bool(front_texture_import) +
+                    ",\"replicated_paint_used\":" + json_bool(!front_texture_import) +
+                    ",\"front_paint_stream_used\":" + json_bool(front_atlas_paint_stream || front_sample_paint_stream || front_metallic_texture_stream) +
+                    ",\"front_atlas_paint_stream_used\":" + json_bool(front_atlas_paint_stream) +
+                    ",\"front_sample_paint_stream_used\":" + json_bool(front_sample_paint_stream) +
+                    ",\"front_texture_import_used\":" + json_bool(texture_sync_probe) +
                     ",\"front_texture_source_expected\":\"" + std::string(strict_38923_front_texture_import ? "bulk_calibrated_direct_texture" :
                                                                            (front_texture_import ? "sampled_pixel_front_atlas_legacy_explicit_only" : "not_applicable")) + "\"" +
                     ",\"front_texture_parity_target\":\"38923cc_assemble_direct_texture\"" +
@@ -8424,12 +8819,15 @@ namespace
                     ",\"image_bulk_calibration_ok\":false" +
                     ",\"texture_source_verified\":false" +
                     ",\"bulk_readback_failure\":\"pending_capture\"" +
-                    ",\"temporary_diagnostic_only\":" + json_bool(diagnostic_import) +
-                    ",\"diagnostic_import_channels\":" + std::string(front_texture_import ? "[\"albedo\",\"metallic\",\"roughness\"]" : "[\"albedo\"]") +
+                    ",\"temporary_diagnostic_only\":" + json_bool(texture_sync_probe) +
+                    ",\"diagnostic_import_channels\":[\"albedo\"]" +
+                    ",\"texture_sync_probe\":" + json_bool(texture_sync_probe) +
+                    ",\"color_transfer_probe\":" + json_bool(color_transfer_probe) +
+                    ",\"multiplayer_sync_unverified\":" + json_bool(texture_sync_probe) +
                     ",\"front_payload_placement_used\":false" +
                     ",\"front_payload_color_used\":false" +
-                    ",\"front_only\":" + json_bool(front_metallic_texture_route && !front_texture_import) +
-                    ",\"side_back_skipped\":" + json_bool(front_metallic_texture_route && !front_texture_import) +
+                    ",\"front_only\":" + json_bool(front_paint_route && !front_texture_import) +
+                    ",\"side_back_skipped\":" + json_bool(front_paint_route && !front_texture_import) +
                     ",\"front_texture_back_skipped\":false" +
                     ",\"front_texture_material_channels_overlaid\":" + json_bool(front_texture_import) +
                     ",\"metallic_base_used\":" + json_bool(front_metallic_texture_route && !front_texture_import) +
@@ -8454,7 +8852,6 @@ namespace
                         std::string(",\"exact_layout_available\":") + json_bool(meccha_mesh_layout::ExactRenderDataLayoutAvailable) +
                         std::string(",\"layout_failure_reason\":\"") + meccha_mesh_layout::FailureReason + "\"" +
                         std::string(",\"cpu_mesh_probe_only\":") + json_bool(cpu_mesh_probe_only) +
-                        std::string(",\"cpu_mesh_texture_import_diagnostic\":") + json_bool(cpu_mesh_texture_import) +
                         std::string(",\"cpu_mesh_texture_paint_stream\":") + json_bool(cpu_mesh_texture_stream) +
                         ",\"screen_space_brush_query_fallback_used\":false" +
                         ",\"front_sampling_ue_query_skipped\":true" +
@@ -8531,7 +8928,7 @@ namespace
                         ",\"metallic_base_settled_before_front\":true" +
                         ",\"metallic_base_changed_during_settle\":false" +
                         ",\"paint_api_probe_skipped\":true";
-            paint_api_probe_selected = "skipped_38923_texture_import_diagnostic";
+            paint_api_probe_selected = "skipped_texture_sync_strict_probe_not_paint_route";
             atlas_target_channel = meccha_sdk::EPaintChannel::Albedo;
             atlas_use_world_position = false;
         }
@@ -8781,17 +9178,17 @@ namespace
         SdkNativeFrontSampleResult native_front{};
         SdkFrontCaptureProbe front_capture{};
         SdkReplicatedStats atlas_stats{};
-        const std::string sampling_started_stage = front_metallic_texture_route ? "front_sampling_started" : "atlas_sampling_started";
-        const std::string sampling_done_stage = front_metallic_texture_route ? "front_sampling_done" : "atlas_sampling_done";
-        const std::string capture_started_stage = front_metallic_texture_route ? "front_capture_started" : "atlas_capture_started";
-        const std::string capture_done_stage = front_metallic_texture_route ? "front_capture_done" : "atlas_capture_done";
-        const std::string atlas_assembled_stage = front_metallic_texture_route ? "front_atlas_assembled" : "atlas_assembled";
-        const std::string strokes_generated_stage = front_metallic_texture_route ? "front_strokes_generated" : "atlas_strokes_generated";
-        const std::string stroke_budget_stage = front_metallic_texture_route ? "front_stroke_budget_exceeded" : "atlas_stroke_budget_exceeded";
+        const std::string sampling_started_stage = front_paint_route ? "front_sampling_started" : "atlas_sampling_started";
+        const std::string sampling_done_stage = front_paint_route ? "front_sampling_done" : "atlas_sampling_done";
+        const std::string capture_started_stage = front_paint_route ? "front_capture_started" : "atlas_capture_started";
+        const std::string capture_done_stage = front_paint_route ? "front_capture_done" : "atlas_capture_done";
+        const std::string atlas_assembled_stage = front_paint_route ? "front_atlas_assembled" : "atlas_assembled";
+        const std::string strokes_generated_stage = front_paint_route ? "front_strokes_generated" : "atlas_strokes_generated";
+        const std::string stroke_budget_stage = front_paint_route ? "front_stroke_budget_exceeded" : "atlas_stroke_budget_exceeded";
         std::string bridge_events = front_texture_import
                                         ? "\"bridge_events\":[\"texture_import_api_ready\""
                                         : "\"bridge_events\":[\"replicated_api_ready\"";
-        if (front_metallic_texture_route && !front_texture_import)
+        if (front_metallic_texture_stream)
         {
             bridge_events += ",\"metallic_base_prepared\",\"metallic_base_apply_tick\",\"metallic_base_visible\",\"metallic_base_done\"";
         }
@@ -8802,7 +9199,7 @@ namespace
         bridge_events += ",\"" + sampling_started_stage + "\"";
         if (!kEnableNativeSceneCaptureForF10)
         {
-            emit_progress(front_metallic_texture_route ? "front_capture_unavailable" : "atlas_capture_unavailable", "native capture backend is disabled", 1, 8, elapsed_now_ms());
+            emit_progress(front_paint_route ? "front_capture_unavailable" : "atlas_capture_unavailable", "native capture backend is disabled", 1, 8, elapsed_now_ms());
             metadata += std::string(",\"front_capture_backend_enabled\":false") +
                         ",\"front_capture_failure\":\"front_capture_backend_disabled_after_d3d12_crash\"" +
                         ",\"stroke_count\":0" +
@@ -8814,7 +9211,7 @@ namespace
                                  "native SceneCapture2D/CreateRenderTarget2D backend disabled; no paint was dispatched",
                                  metadata);
         }
-        emit_progress(sampling_started_stage, "collecting native front surface samples", front_metallic_texture_route ? 3 : 2, front_metallic_texture_route ? 9 : 8, elapsed_now_ms());
+        emit_progress(sampling_started_stage, "collecting native front surface samples", front_paint_route ? 3 : 2, front_paint_route ? 9 : 8, elapsed_now_ms());
         native_front = sdk_collect_native_front_samples(ref, ctx, {});
         const auto front_bbox_width_px = std::max(0.0, (native_front.bbox_max_nx - native_front.bbox_min_nx) * static_cast<double>(native_front.viewport_width));
         const auto front_bbox_height_px = std::max(0.0, (native_front.bbox_max_ny - native_front.bbox_min_ny) * static_cast<double>(native_front.viewport_height));
@@ -8829,7 +9226,7 @@ namespace
                     ",\"capture_fov_hint\":\"deproject_horizontal\"";
         if (native_front.failure == "front_sampling_timeout_before_bridge_timeout")
         {
-            emit_progress("front_sampling_timeout_before_bridge_timeout", "front sampling hit native time budget", front_metallic_texture_route ? 3 : 2, front_metallic_texture_route ? 9 : 8, elapsed_now_ms(),
+            emit_progress("front_sampling_timeout_before_bridge_timeout", "front sampling hit native time budget", front_paint_route ? 3 : 2, front_paint_route ? 9 : 8, elapsed_now_ms(),
                           "\"front_hits\":" + std::to_string(native_front.samples.size()) +
                               ",\"deproject_calls\":" + std::to_string(native_front.deproject_calls) +
                               ",\"hit_test_calls\":" + std::to_string(native_front.hit_test_calls) +
@@ -8845,7 +9242,7 @@ namespace
         }
         if (static_cast<int>(native_front.samples.size()) < native_front.min_front_hits)
         {
-            emit_progress("atlas_sampling_insufficient", "not enough valid surface hits", front_metallic_texture_route ? 3 : 2, front_metallic_texture_route ? 9 : 8, elapsed_now_ms(),
+            emit_progress("atlas_sampling_insufficient", "not enough valid surface hits", front_paint_route ? 3 : 2, front_paint_route ? 9 : 8, elapsed_now_ms(),
                                   "\"front_hits\":" + std::to_string(native_front.samples.size()));
             metadata += std::string(",\"stroke_count\":0") +
                         "," + bridge_events + ",\"atlas_sampling_insufficient\"]";
@@ -8858,10 +9255,10 @@ namespace
         }
 
         bridge_events += ",\"" + sampling_done_stage + "\",\"" + capture_started_stage + "\"";
-        emit_progress(sampling_done_stage, "native front surface sampling completed", front_metallic_texture_route ? 4 : 3, front_metallic_texture_route ? 9 : 8, elapsed_now_ms(),
+        emit_progress(sampling_done_stage, "native front surface sampling completed", front_paint_route ? 4 : 3, front_paint_route ? 9 : 8, elapsed_now_ms(),
                               "\"front_hits\":" + std::to_string(native_front.samples.size()));
         front_capture = sdk_probe_front_capture_backend(ref, ctx, native_front);
-        emit_progress(capture_started_stage, "capturing hidden/background colors", front_metallic_texture_route ? 5 : 4, front_metallic_texture_route ? 9 : 8, elapsed_now_ms(),
+        emit_progress(capture_started_stage, "capturing hidden/background colors", front_paint_route ? 5 : 4, front_paint_route ? 9 : 8, elapsed_now_ms(),
                               "\"front_hits\":" + std::to_string(native_front.samples.size()));
         metadata += sdk_front_capture_metadata(front_capture);
         auto captured_front = sdk_capture_front_colors(ref, ctx, native_front, before0.width, before0.height);
@@ -8873,8 +9270,8 @@ namespace
         {
             const std::string failure_stage = captured_front.failure == "front_texture_bulk_calibration_unavailable"
                                                   ? "front_texture_bulk_calibration_unavailable"
-                                                  : (front_metallic_texture_route ? "front_capture_unavailable" : "atlas_capture_unavailable");
-            emit_progress(failure_stage, "front capture/readback failed", front_metallic_texture_route ? 5 : 4, front_metallic_texture_route ? 9 : 8, elapsed_now_ms());
+                                                  : (front_paint_route ? "front_capture_unavailable" : "atlas_capture_unavailable");
+            emit_progress(failure_stage, "front capture/readback failed", front_paint_route ? 5 : 4, front_paint_route ? 9 : 8, elapsed_now_ms());
             metadata += std::string(",\"stroke_count\":0") +
                         "," + bridge_events + ",\"" + failure_stage + "\"]";
             return response_json(false,
@@ -8885,8 +9282,132 @@ namespace
                                  metadata);
         }
         bridge_events += ",\"" + capture_done_stage + "\"";
-        emit_progress(capture_done_stage, "front capture/readback completed", front_metallic_texture_route ? 6 : 5, front_metallic_texture_route ? 9 : 8, elapsed_now_ms(),
+        emit_progress(capture_done_stage, "front capture/readback completed", front_paint_route ? 6 : 5, front_paint_route ? 9 : 8, elapsed_now_ms(),
                               "\"front_hits\":" + std::to_string(captured_front.samples.size()));
+
+        if (front_sample_paint_stream)
+        {
+            constexpr int sample_stroke_cap = 120000;
+            std::vector<meccha_sdk::FPaintStroke> sample_strokes{};
+            sample_strokes.reserve(captured_front.samples.size());
+            for (const auto& sample : captured_front.samples)
+            {
+                if (static_cast<int>(sample_strokes.size()) >= sample_stroke_cap)
+                {
+                    break;
+                }
+                auto brush = sdk_copy_current_brush(ctx, std::max(0.0015, std::min(0.0060, sample.radius)));
+                const auto channel = sdk_make_channel(clamp01(sample.r),
+                                                      clamp01(sample.g),
+                                                      clamp01(sample.b),
+                                                      0.0,
+                                                      0.65,
+                                                      meccha_sdk::EPaintChannelApplyMode::Override);
+                sample_strokes.push_back(sdk_make_uv_stroke(clamp01(sample.u),
+                                                            clamp01(sample.v),
+                                                            channel,
+                                                            brush,
+                                                            meccha_sdk::EPaintChannel::Albedo));
+            }
+            metadata += std::string(",\"front_sample_paint_source\":\"bulk_capture_front_samples_no_texture_atlas\"") +
+                        ",\"front_sample_paint_target_channel\":\"Albedo\"" +
+                        ",\"front_sample_paint_metallic_overwrite\":false" +
+                        ",\"front_sample_paint_roughness_overwrite\":false" +
+                        ",\"front_sample_paint_texture_import_used\":false" +
+                        ",\"front_sample_paint_atlas_assembly_used\":false" +
+                        ",\"front_sample_paint_requested_strokes\":" + std::to_string(sample_strokes.size()) +
+                        ",\"front_sample_paint_stroke_cap\":" + std::to_string(sample_stroke_cap);
+            if (sample_strokes.empty() || static_cast<int>(captured_front.samples.size()) > sample_stroke_cap)
+            {
+                const char* failure_stage = sample_strokes.empty() ? "front_sample_paint_no_strokes" : "front_sample_paint_budget_exceeded";
+                emit_progress(failure_stage, "front sample paint stream cannot dispatch", 8, 9, elapsed_now_ms(),
+                              "\"sample_strokes\":" + std::to_string(sample_strokes.size()) +
+                                  ",\"stroke_cap\":" + std::to_string(sample_stroke_cap));
+                metadata += "," + bridge_events + ",\"" + failure_stage + "\"]";
+                return response_json(false,
+                                     failure_stage,
+                                     0,
+                                     1,
+                                     "front sample paint stream did not dispatch; no texture/import fallback was used",
+                                     metadata);
+            }
+
+            SdkReplicatedStats sample_stats{};
+            bridge_events += ",\"front_sample_strokes_generated\",\"replicated_stream_started\"";
+            emit_progress("front_sample_strokes_generated", "front sample paint strokes generated", 8, 9, elapsed_now_ms(),
+                          "\"stroke_count\":" + std::to_string(sample_strokes.size()));
+            emit_progress("replicated_stream_started", "dispatching front sample ServerPaintBatch stream", 8, 9, elapsed_now_ms(),
+                          "\"stroke_count\":" + std::to_string(sample_strokes.size()));
+
+            const int raw_batch_limit = safe_read<int>(ctx.component + meccha_sdk::FieldOffsets::RuntimePaintable_MaxReplicatedPaintStrokesPerTick, 24);
+            const int batch_limit = std::max(1, std::min(raw_batch_limit > 0 ? raw_batch_limit : 24, 256));
+            const int server_batches_total = static_cast<int>((sample_strokes.size() + static_cast<std::size_t>(batch_limit) - 1) / static_cast<std::size_t>(batch_limit));
+            int last_stream_percent = -1;
+            const auto stream_started = std::chrono::steady_clock::now();
+            auto stream_progress = [&](const SdkReplicatedStats& stats, int server_sent, int total) -> bool {
+                const int percent = total > 0 ? std::max(0, std::min(100, static_cast<int>((static_cast<long long>(server_sent) * 100LL) / total))) : 100;
+                if (percent != last_stream_percent)
+                {
+                    last_stream_percent = percent;
+                    const auto elapsed_ms = elapsed_now_ms();
+                    const auto stream_elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stream_started).count();
+                    const double eta_ms = percent > 0 ? std::max(0.0, (stream_elapsed_ms / (static_cast<double>(percent) / 100.0)) - stream_elapsed_ms) : 0.0;
+                    emit_progress("replicated_stream_progress",
+                                  "dispatching front sample ServerPaintBatch stream",
+                                  percent,
+                                  100,
+                                  elapsed_ms,
+                                  "\"server_batches\":" + std::to_string(server_batches_total) +
+                                      ",\"server_batch_index\":" + std::to_string(stats.batch_calls) +
+                                      ",\"server_sent\":" + std::to_string(server_sent) +
+                                      ",\"stroke_count\":" + std::to_string(total) +
+                                      ",\"eta_ms\":" + std::to_string(eta_ms));
+                }
+                return elapsed_now_ms() < 210000.0;
+            };
+            if (!sdk_dispatch_replicated_strokes_with_progress(ctx, sample_strokes, sample_stats, stream_progress))
+            {
+                const std::string failure_stage = sample_stats.first_failure == "server_stream_timeout_before_bridge_timeout" ?
+                    "server_stream_timeout_before_bridge_timeout" :
+                    "server_batch_failed";
+                emit_progress(failure_stage, "front sample ServerPaintBatch stream failed", 8, 9, elapsed_now_ms(),
+                              "\"server_sent\":" + std::to_string(sample_stats.server_sent) +
+                                  ",\"server_failed\":" + std::to_string(sample_stats.server_failed));
+                metadata += sdk_stats_metadata("front_sample_paint", sample_stats) +
+                            "," + bridge_events + ",\"" + failure_stage + "\"]";
+                return response_json(false,
+                                     failure_stage.c_str(),
+                                     sample_stats.server_sent,
+                                     std::max(1, sample_stats.server_failed),
+                                     "front sample paint ServerPaintBatch failed: " + sample_stats.first_failure,
+                                     metadata);
+            }
+
+            bridge_events += ",\"replicated_stream_done\"";
+            emit_progress("replicated_stream_done", "front sample ServerPaintBatch stream dispatched", 9, 9, elapsed_now_ms(),
+                          "\"server_sent\":" + std::to_string(sample_stats.server_sent));
+            Sleep(100);
+            auto after0 = sdk_export_channel_bytes(ref, ctx, 0);
+            const bool hash_changed = after0.ok && after0.hash != before0.hash;
+            const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            metadata += sdk_stats_metadata("front_sample_paint", sample_stats) +
+                        sdk_channel_metadata("after_albedo", after0) +
+                        ",\"hash_before\":\"" + std::to_string(before0.hash) + "\"" +
+                        ",\"hash_after\":\"" + std::to_string(after0.hash) + "\"" +
+                        ",\"hash_changed\":" + json_bool(hash_changed) +
+                        ",\"server_rpc\":\"ServerPaintBatch\"" +
+                        ",\"server_batches\":" + std::to_string(sample_stats.batch_calls) +
+                        ",\"server_sent\":" + std::to_string(sample_stats.server_sent) +
+                        ",\"server_failed\":" + std::to_string(sample_stats.server_failed) +
+                        ",\"elapsed_ms\":" + std::to_string(elapsed);
+            metadata += "," + bridge_events + ",\"paint_done\"]";
+            return response_json(true,
+                                 "paint_done",
+                                 sample_stats.server_sent,
+                                 0,
+                                 "front sample paint stream dispatched without texture import",
+                                 metadata);
+        }
 
         if (front_texture_import)
         {
@@ -8924,12 +9445,15 @@ namespace
                 roughness_sum += roughness_value;
             }
             const auto denom = static_cast<double>(std::max(1, material_samples));
-            metadata += std::string(",\"front_albedo_source\":\"bulk_calibrated_srgb_exact_no_compensation\"") +
-                        ",\"front_material_source\":\"no_material_api_yet_infer_surface_material\"" +
+            metadata += std::string(",\"front_albedo_source\":\"bulk_calibrated_srgb_raw_exact\"") +
+                        ",\"front_material_source\":\"preserve_existing_channels_no_material_import\"" +
                         ",\"front_material_trace_evidence_ported\":false" +
                         ",\"front_material_compensation_passes\":0" +
+                        ",\"front_material_compensation_backend\":\"disabled_until_trace_evidence_ported\"" +
+                        ",\"front_material_channels_imported\":false" +
                         ",\"front_color_sanitize_used\":false" +
                         ",\"front_color_lift_used\":false" +
+                        ",\"front_color_raw_srgb_preserved\":true" +
                         ",\"front_material_metallic_override\":\"none\"" +
                         ",\"front_material_samples\":" + std::to_string(material_samples) +
                         ",\"front_material_valid\":" + std::to_string(material_valid) +
@@ -8948,7 +9472,7 @@ namespace
 
         SdkAtlasSideBackResult side_back{};
         std::vector<FrontSample> atlas_samples = captured_front.samples;
-        const bool collect_side_back_for_texture = !front_texture_import && !front_metallic_texture_route;
+        const bool collect_side_back_for_texture = texture_sync_probe;
         if (collect_side_back_for_texture)
         {
             side_back = sdk_collect_atlas_side_back_samples(ref, ctx, native_front, captured_front.samples, before0.width, before0.height);
@@ -8977,7 +9501,8 @@ namespace
         {
             metadata += std::string(",\"side_back_attempts\":0,\"side_back_success\":0,\"side_back_owner_hits\":0,\"side_back_uv_hits\":0") +
                         ",\"side_hits\":0,\"back_hits\":0,\"side_back_duplicate_texels\":0,\"side_back_nearest_sources\":0" +
-                        ",\"side_back_failure\":\"" + std::string(front_texture_import ? "skipped_front_texture_back_metallic_route" : "skipped_front_only_route") + "\"";
+                        ",\"side_back_failure\":\"" + std::string(color_transfer_probe ? "skipped_color_transfer_probe" :
+                                                                  (front_texture_import ? "skipped_front_texture_route" : "skipped_front_only_route")) + "\"";
         }
 
         auto make_filled_channel = [](const ChannelBuffer& source, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
@@ -9007,23 +9532,31 @@ namespace
         ChannelBuffer atlas_base_roughness = before2;
         if (front_texture_import)
         {
-            atlas_base_albedo.bytes = make_filled_channel(before0, 255, 255, 255);
-            atlas_base_metallic.bytes = make_filled_channel(before1, 255, 255, 255);
-            atlas_base_roughness.bytes = make_filled_channel(before2, 0, 0, 0);
-            atlas_base_albedo.hash = hash_bytes(atlas_base_albedo.bytes);
-            atlas_base_metallic.hash = hash_bytes(atlas_base_metallic.bytes);
-            atlas_base_roughness.hash = hash_bytes(atlas_base_roughness.bytes);
+            atlas_base_albedo = pre_metallic_albedo;
+            atlas_base_metallic = pre_metallic_metallic;
+            atlas_base_roughness = pre_metallic_roughness;
+        }
+        if (color_transfer_probe)
+        {
+            atlas_base_albedo.bytes = make_filled_channel(atlas_base_albedo, 255, 0, 255);
         }
         auto atlas = sdk_assemble_texture_atlas(atlas_base_albedo, atlas_base_metallic, atlas_base_roughness, atlas_samples);
         metadata += sdk_atlas_metadata(atlas) +
                     sdk_write_atlas_debug_artifacts(atlas) +
-                    ",\"atlas_base_source\":\"" + std::string(front_texture_import ? "full_body_white_metallic_remainder_front_texture_overlay" : "current_channels") + "\"" +
-                    ",\"front_texture_back_metallic_white\":" + json_bool(front_texture_import) +
-                    ",\"front_texture_side_back_texture_skipped\":" + json_bool(front_texture_import) +
+                    ",\"atlas_base_source\":\"" + std::string(color_transfer_probe ? "magenta_unpainted_sentinel_color_transfer_probe" :
+                                                              (front_texture_import ? "pre_metallic_exported_channels_preserve_unpainted_texture_diagnostic" : "current_channels")) + "\"" +
+                    ",\"color_probe_unpainted_sentinel\":\"" + std::string(color_transfer_probe ? "magenta_ff00ff" : "none") + "\"" +
+                    ",\"front_texture_back_metallic_white\":false" +
+                    ",\"front_texture_side_back_texture_skipped\":" + json_bool(front_texture_import && !texture_sync_probe) +
+                    ",\"front_texture_unpainted_source\":\"" + std::string(front_texture_import ? "pre_metallic_exported_channels" : "current_channels") + "\"" +
+                    ",\"front_texture_white_base_used\":false" +
                     ",\"atlas_base_hash\":\"" + std::to_string(atlas_base_albedo.hash) + "\"" +
                     ",\"atlas_base_metallic_hash\":\"" + std::to_string(atlas_base_metallic.hash) + "\"" +
                     ",\"atlas_base_roughness_hash\":\"" + std::to_string(atlas_base_roughness.hash) + "\"" +
                     ",\"front_hits\":" + std::to_string(captured_front.samples.size()) +
+                    ",\"unique_atlas_texels\":" + std::to_string(atlas.stats.direct_texels) +
+                    ",\"target_unique_atlas_texels\":500000" +
+                    ",\"precision_profile\":\"max_texture_probe\"" +
                     ",\"side_back_hits\":" + std::to_string(side_back.samples.size());
         if (strict_38923_front_texture_import && atlas.stats.direct_texels < 500000)
         {
@@ -9047,7 +9580,8 @@ namespace
         }
         bridge_events += ",\"" + atlas_assembled_stage + "\"";
         emit_progress(atlas_assembled_stage, "front CPU atlas assembled", front_metallic_texture_route ? 7 : 7, front_metallic_texture_route ? 9 : 8, elapsed_now_ms(),
-                              "\"direct_texels\":" + std::to_string(atlas.stats.direct_texels));
+                              "\"direct_texels\":" + std::to_string(atlas.stats.direct_texels) +
+                                  ",\"target_unique_atlas_texels\":500000");
 
         if (diagnostic_import)
         {
@@ -9055,51 +9589,140 @@ namespace
             const std::string import_done_stage = front_texture_import ? "front_texture_import_done" : "diagnostic_import_done";
             const std::string import_failed_stage = front_texture_import ? "front_texture_import_failed" : "diagnostic_import_failed";
             const std::string import_not_observed_stage = front_texture_import ? "front_texture_import_not_observed" : "diagnostic_import_not_observed";
+            const bool texture_sync_api_available = ctx.relay_texture_sync_to_server_function != 0 ||
+                                                    ctx.request_full_texture_sync_function != 0 ||
+                                                    ctx.server_request_texture_sync_function != 0 ||
+                                                    ctx.server_relay_texture_sync_function != 0;
+            if (texture_sync_probe && !texture_sync_api_available)
+            {
+                emit_progress("texture_sync_api_unavailable", "no runtime texture sync RPC is available; local import skipped", 8, 9, elapsed_now_ms());
+                metadata += std::string(",\"texture_sync_relay_available\":") + json_bool(ctx.relay_texture_sync_to_server_function != 0) +
+                            ",\"texture_sync_request_full_available\":" + json_bool(ctx.request_full_texture_sync_function != 0) +
+                            ",\"texture_sync_server_request_available\":" + json_bool(ctx.server_request_texture_sync_function != 0) +
+                            ",\"texture_sync_server_relay_available\":" + json_bool(ctx.server_relay_texture_sync_function != 0) +
+                            "," + bridge_events + ",\"texture_sync_api_unavailable\"]";
+                return response_json(false,
+                                     "texture_sync_api_unavailable",
+                                     0,
+                                     1,
+                                     "runtime texture sync API is unavailable; local texture import was skipped",
+                                     metadata);
+            }
             bridge_events += ",\"" + import_started_stage + "\"";
-            emit_progress(import_started_stage, front_texture_import ? "importing front texture channels" : "importing diagnostic albedo texture", front_metallic_texture_route ? 8 : 7, front_metallic_texture_route ? 9 : 8, elapsed_now_ms(),
+            emit_progress(import_started_stage, "importing texture only for strict sync probe", front_metallic_texture_route ? 8 : 7, front_metallic_texture_route ? 9 : 8, elapsed_now_ms(),
                           "\"front_hits\":" + std::to_string(captured_front.samples.size()));
             std::string import_failure0{};
             std::string import_failure1{};
             std::string import_failure2{};
-            const bool import0_ok = sdk_import_channel_bytes(ctx, 0, atlas.albedo, import_failure0);
-            const bool import1_ok = front_texture_import ? sdk_import_channel_bytes(ctx, 1, atlas.metallic, import_failure1) : true;
-            const bool import2_ok = front_texture_import ? sdk_import_channel_bytes(ctx, 2, atlas.roughness, import_failure2) : true;
+            enum class SdkAlbedoTransfer
+            {
+                IdentitySrgb,
+                SrgbToLinear,
+                IdentitySrgbNoCompensation,
+            };
+            auto transfer_label = [](SdkAlbedoTransfer transfer) -> const char* {
+                switch (transfer)
+                {
+                case SdkAlbedoTransfer::IdentitySrgb: return "identity_srgb";
+                case SdkAlbedoTransfer::SrgbToLinear: return "srgb_to_linear";
+                case SdkAlbedoTransfer::IdentitySrgbNoCompensation: return "identity_srgb_no_compensation";
+                }
+                return "unknown";
+            };
+            auto make_albedo_import_bytes = [&](SdkAlbedoTransfer transfer) {
+                auto bytes = atlas.albedo;
+                if (transfer == SdkAlbedoTransfer::SrgbToLinear)
+                {
+                    auto srgb_to_linear_byte = [](std::uint8_t value) -> std::uint8_t {
+                        const double srgb = static_cast<double>(value) / 255.0;
+                        const double linear = srgb <= 0.04045
+                                                  ? srgb / 12.92
+                                                  : std::pow((srgb + 0.055) / 1.055, 2.4);
+                        return static_cast<std::uint8_t>(std::max(0.0, std::min(255.0, std::round(linear * 255.0))));
+                    };
+                    for (std::size_t offset = 0; offset + 3 < bytes.size(); offset += 4)
+                    {
+                        bytes[offset + 0] = srgb_to_linear_byte(bytes[offset + 0]);
+                        bytes[offset + 1] = srgb_to_linear_byte(bytes[offset + 1]);
+                        bytes[offset + 2] = srgb_to_linear_byte(bytes[offset + 2]);
+                    }
+                }
+                return bytes;
+            };
+            auto write_albedo_ppm = [&](const wchar_t* filename, const std::vector<std::uint8_t>& bytes) -> bool {
+                const int width = atlas.stats.width;
+                const int height = atlas.stats.height;
+                const std::size_t pixels = width > 0 && height > 0
+                    ? static_cast<std::size_t>(width) * static_cast<std::size_t>(height)
+                    : 0U;
+                if (pixels == 0 || bytes.size() < pixels * 4U)
+                {
+                    return false;
+                }
+                std::string ppm = "P6\n" + std::to_string(width) + " " + std::to_string(height) + "\n255\n";
+                ppm.reserve(ppm.size() + pixels * 3U);
+                for (std::size_t index = 0; index < pixels; ++index)
+                {
+                    const auto offset = index * 4U;
+                    ppm.push_back(static_cast<char>(bytes[offset + 0]));
+                    ppm.push_back(static_cast<char>(bytes[offset + 1]));
+                    ppm.push_back(static_cast<char>(bytes[offset + 2]));
+                }
+                return write_runtime_artifact_binary(filename, ppm);
+            };
+            const auto albedo_import_bytes = front_texture_import ? make_albedo_import_bytes(SdkAlbedoTransfer::SrgbToLinear) : atlas.albedo;
+            const auto albedo_import_hash = hash_bytes(albedo_import_bytes);
+            const bool import_material_channels = false;
+            metadata += std::string(",\"front_texture_albedo_import_byte_order\":\"") +
+                        "rgba_identity" + "\"" +
+                        ",\"front_texture_albedo_import_transfer\":\"" + std::string(front_texture_import ? "srgb_to_linear_for_runtime_material" : "identity") + "\"" +
+                        ",\"atlas_import_albedo_hash\":\"" + std::to_string(albedo_import_hash) + "\"" +
+                        ",\"atlas_preview_albedo_hash\":\"" + std::to_string(atlas.hash) + "\"" +
+                        ",\"front_texture_import_material_channels\":" + json_bool(import_material_channels) +
+                        ",\"front_texture_material_channel_mode\":\"preserve_existing\"";
+            const bool import0_ok = sdk_import_channel_bytes(ctx, 0, albedo_import_bytes, import_failure0);
+            const bool import1_ok = front_texture_import && import_material_channels ? sdk_import_channel_bytes(ctx, 1, atlas.metallic, import_failure1) : true;
+            const bool import2_ok = front_texture_import && import_material_channels ? sdk_import_channel_bytes(ctx, 2, atlas.roughness, import_failure2) : true;
             Sleep(100);
             auto after0 = sdk_export_channel_bytes(ref, ctx, 0);
             auto after1 = front_texture_import ? sdk_export_channel_bytes(ref, ctx, 1) : before1;
             auto after2 = front_texture_import ? sdk_export_channel_bytes(ref, ctx, 2) : before2;
             const bool hash_changed = (after0.ok && after0.hash != before0.hash) ||
-                                      (front_texture_import && after1.ok && after1.hash != before1.hash) ||
-                                      (front_texture_import && after2.ok && after2.hash != before2.hash);
-            const bool import_observed = import0_ok && after0.ok && after0.hash == atlas.hash &&
+                                      (front_texture_import && import_material_channels && after1.ok && after1.hash != before1.hash) ||
+                                      (front_texture_import && import_material_channels && after2.ok && after2.hash != before2.hash);
+            const bool import_observed = import0_ok && after0.ok && after0.hash == albedo_import_hash &&
                                          (!front_texture_import ||
-                                          (import1_ok && import2_ok &&
-                                           after1.ok && after1.hash == atlas.metallic_hash &&
-                                           after2.ok && after2.hash == atlas.roughness_hash)) &&
+                                          (import_material_channels
+                                               ? (import1_ok && import2_ok &&
+                                                  after1.ok && after1.hash == atlas.metallic_hash &&
+                                                  after2.ok && after2.hash == atlas.roughness_hash)
+                                               : (after1.ok && after2.ok))) &&
                                          hash_changed;
             Sleep(1500);
             auto after_settle0 = sdk_export_channel_bytes(ref, ctx, 0);
             auto after_settle1 = front_texture_import ? sdk_export_channel_bytes(ref, ctx, 1) : after1;
             auto after_settle2 = front_texture_import ? sdk_export_channel_bytes(ref, ctx, 2) : after2;
             const bool import_still_observed_after_settle = import_observed &&
-                                                            after_settle0.ok && after_settle0.hash == atlas.hash &&
+                                                            after_settle0.ok && after_settle0.hash == albedo_import_hash &&
                                                             (!front_texture_import ||
-                                                             (after_settle1.ok && after_settle1.hash == atlas.metallic_hash &&
-                                                              after_settle2.ok && after_settle2.hash == atlas.roughness_hash));
+                                                             (import_material_channels
+                                                                  ? (after_settle1.ok && after_settle1.hash == atlas.metallic_hash &&
+                                                                     after_settle2.ok && after_settle2.hash == atlas.roughness_hash)
+                                                                  : (after_settle1.ok && after_settle2.ok)));
             const bool import_overwritten_after_settle = import_observed &&
-                                                         (after_settle0.ok && after_settle0.hash != atlas.hash ||
-                                                          (front_texture_import && after_settle1.ok && after_settle1.hash != atlas.metallic_hash) ||
-                                                          (front_texture_import && after_settle2.ok && after_settle2.hash != atlas.roughness_hash));
+                                                         (after_settle0.ok && after_settle0.hash != albedo_import_hash ||
+                                                          (front_texture_import && import_material_channels && after_settle1.ok && after_settle1.hash != atlas.metallic_hash) ||
+                                                          (front_texture_import && import_material_channels && after_settle2.ok && after_settle2.hash != atlas.roughness_hash));
             std::string final_import_failure0{};
             std::string final_import_failure1{};
             std::string final_import_failure2{};
             const bool final_import0_ok = front_texture_import
-                                              ? sdk_import_channel_bytes(ctx, 0, atlas.albedo, final_import_failure0)
+                                              ? sdk_import_channel_bytes(ctx, 0, albedo_import_bytes, final_import_failure0)
                                               : true;
-            const bool final_import1_ok = front_texture_import
+            const bool final_import1_ok = front_texture_import && import_material_channels
                                               ? sdk_import_channel_bytes(ctx, 1, atlas.metallic, final_import_failure1)
                                               : true;
-            const bool final_import2_ok = front_texture_import
+            const bool final_import2_ok = front_texture_import && import_material_channels
                                               ? sdk_import_channel_bytes(ctx, 2, atlas.roughness, final_import_failure2)
                                               : true;
             const bool final_import_ok = final_import0_ok && final_import1_ok && final_import2_ok;
@@ -9108,10 +9731,82 @@ namespace
             auto after_final_import1 = front_texture_import ? sdk_export_channel_bytes(ref, ctx, 1) : after_settle1;
             auto after_final_import2 = front_texture_import ? sdk_export_channel_bytes(ref, ctx, 2) : after_settle2;
             const bool final_import_observed = final_import_ok &&
-                                               after_final_import0.ok && after_final_import0.hash == atlas.hash &&
+                                               after_final_import0.ok && after_final_import0.hash == albedo_import_hash &&
                                                (!front_texture_import ||
-                                                (after_final_import1.ok && after_final_import1.hash == atlas.metallic_hash &&
-                                                 after_final_import2.ok && after_final_import2.hash == atlas.roughness_hash));
+                                                (import_material_channels
+                                                     ? (after_final_import1.ok && after_final_import1.hash == atlas.metallic_hash &&
+                                                        after_final_import2.ok && after_final_import2.hash == atlas.roughness_hash)
+                                                     : (after_final_import1.ok && after_final_import2.ok)));
+            bool texture_sync_attempted = false;
+            bool texture_sync_relay_ok = false;
+            bool texture_sync_request_full_ok = false;
+            bool texture_sync_server_request_ok = false;
+            bool texture_sync_server_relay_ok = false;
+            std::string texture_sync_relay_failure{"not_run"};
+            std::string texture_sync_request_full_failure{"not_run"};
+            std::string texture_sync_server_request_failure{"not_run"};
+            std::string texture_sync_server_relay_failure{"not_run"};
+            std::string texture_sync_success_candidate{};
+            ChannelBuffer after_texture_sync0{};
+            ChannelBuffer after_texture_sync1{};
+            ChannelBuffer after_texture_sync2{};
+            if (texture_sync_probe && final_import_observed)
+            {
+                texture_sync_attempted = true;
+                bridge_events += ",\"front_texture_import_done_local_only\"";
+                emit_progress("front_texture_import_done_local_only",
+                              "front texture import observed locally before sync",
+                              front_metallic_texture_route ? 9 : 8,
+                              front_metallic_texture_route ? 9 : 8,
+                              elapsed_now_ms(),
+                              "\"pre_sync_albedo_hash\":\"" + std::to_string(after_final_import0.hash) + "\"");
+                bridge_events += ",\"texture_sync_started\"";
+                emit_progress("texture_sync_started", "dispatching runtime texture sync RPC candidates", front_metallic_texture_route ? 9 : 8, front_metallic_texture_route ? 9 : 8, elapsed_now_ms(),
+                              "\"front_hits\":" + std::to_string(captured_front.samples.size()));
+                texture_sync_relay_ok = sdk_call_relay_texture_sync_rpc(ctx,
+                                                                        ctx.relay_texture_sync_to_server_function,
+                                                                        "RelayTextureSyncToServer_unavailable",
+                                                                        texture_sync_relay_failure);
+                if (texture_sync_relay_ok && texture_sync_success_candidate.empty())
+                {
+                    texture_sync_success_candidate = "RelayTextureSyncToServer";
+                }
+                texture_sync_request_full_ok = sdk_call_component_no_param_rpc(ctx,
+                                                                              ctx.request_full_texture_sync_function,
+                                                                              "RequestFullTextureSync_unavailable",
+                                                                              texture_sync_request_full_failure);
+                if (texture_sync_request_full_ok && texture_sync_success_candidate.empty())
+                {
+                    texture_sync_success_candidate = "RequestFullTextureSync";
+                }
+                texture_sync_server_request_ok = sdk_call_component_no_param_rpc(ctx,
+                                                                                ctx.server_request_texture_sync_function,
+                                                                                "ServerRequestTextureSync_unavailable",
+                                                                                texture_sync_server_request_failure);
+                if (texture_sync_server_request_ok && texture_sync_success_candidate.empty())
+                {
+                    texture_sync_success_candidate = "ServerRequestTextureSync";
+                }
+                texture_sync_server_relay_ok = sdk_call_relay_texture_sync_rpc(ctx,
+                                                                              ctx.server_relay_texture_sync_function,
+                                                                              "ServerRelayTextureSync_unavailable",
+                                                                              texture_sync_server_relay_failure);
+                if (texture_sync_server_relay_ok && texture_sync_success_candidate.empty())
+                {
+                    texture_sync_success_candidate = "ServerRelayTextureSync";
+                }
+                Sleep(250);
+                after_texture_sync0 = sdk_export_channel_bytes(ref, ctx, 0);
+                after_texture_sync1 = sdk_export_channel_bytes(ref, ctx, 1);
+                after_texture_sync2 = sdk_export_channel_bytes(ref, ctx, 2);
+                bridge_events += ",\"" + std::string(texture_sync_success_candidate.empty() ? "texture_sync_failed" : "texture_sync_done") + "\"";
+                emit_progress(texture_sync_success_candidate.empty() ? "texture_sync_failed" : "texture_sync_done",
+                              texture_sync_success_candidate.empty() ? "runtime texture sync RPC candidates failed" : "runtime texture sync RPC dispatched",
+                              front_metallic_texture_route ? 9 : 8,
+                              front_metallic_texture_route ? 9 : 8,
+                              elapsed_now_ms(),
+                              "\"texture_sync_success_candidate\":\"" + json_escape(texture_sync_success_candidate) + "\"");
+            }
             const bool front_texture_quality_ok = front_texture_import &&
                                                   captured_front.bulk_readback_used &&
                                                   captured_front.image_bulk_calibration_ok &&
@@ -9119,6 +9814,17 @@ namespace
             const std::string front_texture_quality_failure = front_texture_quality_ok
                                                                   ? std::string("")
                                                                   : std::string("bulk_calibrated_direct_texture_not_observed");
+            const auto pre_sync_albedo_stats = sdk_channel_rgb_stats(after_final_import0);
+            const auto post_sync_albedo_stats = sdk_channel_rgb_stats(after_texture_sync0);
+            const bool texture_sync_hash_changed = texture_sync_probe && after_texture_sync0.ok &&
+                                                   (after_texture_sync0.hash != after_final_import0.hash ||
+                                                    after_texture_sync1.hash != after_final_import1.hash ||
+                                                    after_texture_sync2.hash != after_final_import2.hash);
+            const bool texture_sync_color_shift_suspected = texture_sync_probe && post_sync_albedo_stats.ok && pre_sync_albedo_stats.ok &&
+                                                            (texture_sync_hash_changed ||
+                                                             std::abs(post_sync_albedo_stats.avg - pre_sync_albedo_stats.avg) > 0.01 ||
+                                                             std::abs(post_sync_albedo_stats.min - pre_sync_albedo_stats.min) > 0.01 ||
+                                                             std::abs(post_sync_albedo_stats.max - pre_sync_albedo_stats.max) > 0.01);
             const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
             metadata += sdk_channel_metadata("after_albedo", after0) +
                         sdk_channel_metadata("after_metallic", after1) +
@@ -9129,6 +9835,9 @@ namespace
                         sdk_channel_metadata("after_final_import_albedo", after_final_import0) +
                         sdk_channel_metadata("after_final_import_metallic", after_final_import1) +
                         sdk_channel_metadata("after_final_import_roughness", after_final_import2) +
+                        sdk_channel_rgb_stats_metadata("pre_sync_albedo", after_final_import0) +
+                        sdk_channel_rgb_stats_metadata("pre_sync_metallic", after_final_import1) +
+                        sdk_channel_rgb_stats_metadata("pre_sync_roughness", after_final_import2) +
                         ",\"atlas_hash\":\"" + std::to_string(atlas.hash) + "\"" +
                         ",\"atlas_metallic_hash\":\"" + std::to_string(atlas.metallic_hash) + "\"" +
                         ",\"atlas_roughness_hash\":\"" + std::to_string(atlas.roughness_hash) + "\"" +
@@ -9144,6 +9853,9 @@ namespace
                         ",\"after_final_import_albedo_hash\":\"" + std::to_string(after_final_import0.hash) + "\"" +
                         ",\"after_final_import_metallic_hash\":\"" + std::to_string(after_final_import1.hash) + "\"" +
                         ",\"after_final_import_roughness_hash\":\"" + std::to_string(after_final_import2.hash) + "\"" +
+                        ",\"pre_sync_albedo_hash\":\"" + std::to_string(after_final_import0.hash) + "\"" +
+                        ",\"pre_sync_metallic_hash\":\"" + std::to_string(after_final_import1.hash) + "\"" +
+                        ",\"pre_sync_roughness_hash\":\"" + std::to_string(after_final_import2.hash) + "\"" +
                         ",\"hash_changed\":" + json_bool(hash_changed) +
                         ",\"diagnostic_import_ok\":" + json_bool(import0_ok && import1_ok && import2_ok) +
                         ",\"diagnostic_import_albedo_ok\":" + json_bool(import0_ok) +
@@ -9165,11 +9877,43 @@ namespace
                         ",\"front_texture_final_import_observed\":" + json_bool(final_import_observed) +
                         ",\"front_texture_quality_ok\":" + json_bool(front_texture_quality_ok) +
                         ",\"front_texture_quality_failure\":\"" + json_escape(front_texture_quality_failure) + "\"" +
+                        sdk_channel_metadata("after_texture_sync_albedo", after_texture_sync0) +
+                        sdk_channel_metadata("after_texture_sync_metallic", after_texture_sync1) +
+                        sdk_channel_metadata("after_texture_sync_roughness", after_texture_sync2) +
+                        sdk_channel_rgb_stats_metadata("post_sync_albedo", after_texture_sync0) +
+                        sdk_channel_rgb_stats_metadata("post_sync_metallic", after_texture_sync1) +
+                        sdk_channel_rgb_stats_metadata("post_sync_roughness", after_texture_sync2) +
+                        ",\"texture_sync_strict_probe\":" + json_bool(texture_sync_probe) +
+                        ",\"texture_sync_attempted\":" + json_bool(texture_sync_attempted) +
+                        ",\"texture_sync_relay_available\":" + json_bool(ctx.relay_texture_sync_to_server_function != 0) +
+                        ",\"texture_sync_request_full_available\":" + json_bool(ctx.request_full_texture_sync_function != 0) +
+                        ",\"texture_sync_server_request_available\":" + json_bool(ctx.server_request_texture_sync_function != 0) +
+                        ",\"texture_sync_server_relay_available\":" + json_bool(ctx.server_relay_texture_sync_function != 0) +
+                        ",\"texture_sync_multicast_available\":" + json_bool(ctx.multicast_sync_channel_data_function != 0) +
+                        ",\"texture_sync_compressed_multicast_available\":" + json_bool(ctx.multicast_sync_compressed_channel_data_function != 0) +
+                        ",\"texture_sync_relay_ok\":" + json_bool(texture_sync_relay_ok) +
+                        ",\"texture_sync_request_full_ok\":" + json_bool(texture_sync_request_full_ok) +
+                        ",\"texture_sync_server_request_ok\":" + json_bool(texture_sync_server_request_ok) +
+                        ",\"texture_sync_server_relay_ok\":" + json_bool(texture_sync_server_relay_ok) +
+                        ",\"texture_sync_relay_failure\":\"" + json_escape(texture_sync_relay_failure) + "\"" +
+                        ",\"texture_sync_request_full_failure\":\"" + json_escape(texture_sync_request_full_failure) + "\"" +
+                        ",\"texture_sync_server_request_failure\":\"" + json_escape(texture_sync_server_request_failure) + "\"" +
+                        ",\"texture_sync_server_relay_failure\":\"" + json_escape(texture_sync_server_relay_failure) + "\"" +
+                        ",\"texture_sync_success_candidate\":\"" + json_escape(texture_sync_success_candidate) + "\"" +
+                        ",\"texture_sync_after_albedo_hash\":\"" + std::to_string(after_texture_sync0.hash) + "\"" +
+                        ",\"texture_sync_after_metallic_hash\":\"" + std::to_string(after_texture_sync1.hash) + "\"" +
+                        ",\"texture_sync_after_roughness_hash\":\"" + std::to_string(after_texture_sync2.hash) + "\"" +
+                        ",\"post_sync_albedo_hash\":\"" + std::to_string(after_texture_sync0.hash) + "\"" +
+                        ",\"post_sync_metallic_hash\":\"" + std::to_string(after_texture_sync1.hash) + "\"" +
+                        ",\"post_sync_roughness_hash\":\"" + std::to_string(after_texture_sync2.hash) + "\"" +
+                        ",\"texture_sync_hash_changed\":" + json_bool(texture_sync_hash_changed) +
+                        ",\"texture_sync_color_shift_suspected\":" + json_bool(texture_sync_color_shift_suspected) +
+                        ",\"multiplayer_sync_unverified\":" + json_bool(texture_sync_probe) +
                         ",\"front_paint_stream_skipped\":" + json_bool(front_texture_import) +
-                        ",\"server_rpc\":\"none\"" +
+                        ",\"server_rpc\":\"" + std::string(texture_sync_success_candidate.empty() ? "none" : texture_sync_success_candidate) + "\"" +
                         ",\"server_batches\":0" +
-                        ",\"server_sent\":0" +
-                        ",\"server_failed\":0" +
+                        ",\"server_sent\":" + std::to_string(texture_sync_success_candidate.empty() ? 0 : 1) +
+                        ",\"server_failed\":" + std::to_string(texture_sync_probe && texture_sync_success_candidate.empty() ? 1 : 0) +
                         ",\"stroke_count\":0" +
                         ",\"elapsed_ms\":" + std::to_string(elapsed);
 
@@ -9226,16 +9970,27 @@ namespace
                                      "front texture import observed, but texture source is sampled_pixel_front_atlas and does not meet 38923 direct-texture parity",
                                      metadata);
             }
+            if (texture_sync_probe && texture_sync_success_candidate.empty())
+            {
+                metadata += "," + bridge_events + ",\"" + import_done_stage + "\",\"texture_sync_failed\"]";
+                return response_json(false,
+                                     "texture_sync_failed",
+                                     1,
+                                     1,
+                                     "front texture import observed, but no runtime texture sync RPC candidate dispatched",
+                                     metadata);
+            }
             metadata += "," + bridge_events + ",\"" + import_done_stage + "\"]";
             return response_json(true,
-                                 import_done_stage.c_str(),
+                                 texture_sync_probe ? "texture_sync_strict_probe_done" : import_done_stage.c_str(),
                                  1,
                                  0,
-                                 front_texture_import ? "front texture import observed on albedo/metallic/roughness" : "temporary diagnostic albedo import observed",
+                                 texture_sync_probe ? "texture sync strict probe dispatched; remote unverified" :
+                                                      (front_texture_import ? "front texture import observed on albedo/metallic/roughness" : "temporary diagnostic albedo import observed"),
                                  metadata);
         }
 
-        const int stroke_cap = front_metallic_texture_route ? 120000 : 600000;
+        const int stroke_cap = front_atlas_paint_stream ? 450000 : (front_paint_route ? 120000 : 600000);
         auto stroke_plan = sdk_build_atlas_strokes(ctx, atlas, atlas_target_channel, atlas_use_world_position, stroke_cap);
         metadata += sdk_atlas_stroke_metadata(stroke_plan);
         if (stroke_plan.cap_exceeded || stroke_plan.strokes.empty() || static_cast<int>(stroke_plan.strokes.size()) > stroke_plan.stroke_cap)
@@ -9258,7 +10013,7 @@ namespace
                               "\"stroke_count\":" + std::to_string(stroke_plan.strokes.size()));
 
         const int raw_batch_limit = safe_read<int>(ctx.component + meccha_sdk::FieldOffsets::RuntimePaintable_MaxReplicatedPaintStrokesPerTick, 24);
-        const int batch_limit = std::max(1, std::min(raw_batch_limit > 0 ? raw_batch_limit : 24, 64));
+        const int batch_limit = std::max(1, std::min(raw_batch_limit > 0 ? raw_batch_limit : 24, 256));
         const int server_batches_total = static_cast<int>((stroke_plan.strokes.size() + static_cast<std::size_t>(batch_limit) - 1) / static_cast<std::size_t>(batch_limit));
         int last_stream_percent = -1;
         const auto stream_started = std::chrono::steady_clock::now();
@@ -9284,7 +10039,16 @@ namespace
             return elapsed_now_ms() < 210000.0;
         };
 
-        if (!sdk_dispatch_replicated_strokes_with_progress(ctx, stroke_plan.strokes, atlas_stats, stream_progress))
+        const int atlas_stream_batch_override = front_atlas_paint_stream ? 256 : 0;
+        const int atlas_stream_sleep_ms = front_atlas_paint_stream ? 0 : 16;
+        metadata += ",\"server_stream_batch_override\":" + std::to_string(atlas_stream_batch_override) +
+                    ",\"server_stream_sleep_ms\":" + std::to_string(atlas_stream_sleep_ms);
+        if (!sdk_dispatch_replicated_strokes_with_progress(ctx,
+                                                           stroke_plan.strokes,
+                                                           atlas_stats,
+                                                           stream_progress,
+                                                           atlas_stream_batch_override,
+                                                           atlas_stream_sleep_ms))
         {
             const std::string failure_stage = atlas_stats.first_failure == "server_stream_timeout_before_bridge_timeout" ?
                 "server_stream_timeout_before_bridge_timeout" :
@@ -9445,7 +10209,7 @@ namespace
                    "\"message\":\"ok\",\"timing_ms\":{},"
                    "\"metadata\":{\"commands\":[\"ping\",\"capabilities\",\"sdk_probe\",\"sdk_deep_probe\",\"paint_full_route\",\"shutdown\"],"
                    "\"sdk\":\"chameleonEsp_dumper7_1_7_0_min\","
-                   "\"paint_full_route\":\"metallic_base_then_front_texture_import_diagnostic\","
+                   "\"paint_full_route\":\"front_atlas_paint_stream\","
                    "\"replication\":\"component_server_paint_batch\","
                    "\"multiplayer_replicated\":true}}\n";
         }
