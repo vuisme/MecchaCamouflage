@@ -35,8 +35,9 @@ Logs and status files are written under:
 Useful files:
 
 - `events.jsonl`: structured runtime events.
+- `runtime.log`: plain text runtime log.
 - `last_status.json`: latest success or failure summary.
-- `.progress.json`: transient progress state used by the controller.
+- `.progress.json`: transient bridge progress sidecar used by the controller.
 
 If the game crashes after a MECCHA CHAMELEON update, the tracked SDK may need to be regenerated and reviewed.
 
@@ -63,6 +64,8 @@ make run
 ```
 
 The default development mode is configured at the top of `Makefile`.
+`make build`, `make run`, and `make package` wrap `scripts/build.ps1`,
+`scripts/dev.ps1`, and `scripts/release.ps1`.
 
 ## Runtime SDK Resolution
 

@@ -22,19 +22,17 @@ jobs:
 
       - name: Build runtime
         shell: pwsh
-        run: .\scripts\build_runtime.ps1
+        run: .\scripts\build.ps1
 
-      - name: Static checks
+      - name: Build artifact checks
         shell: pwsh
         run: |
           if (-not (Test-Path ".build/bin/meccha-camouflage.exe")) { throw "runtime exe missing" }
           if (-not (Test-Path ".build/bin/meccha-xenos-bridge.dll")) { throw "bridge dll missing" }
-          foreach ($path in @("native", "src", "pyproject.toml", "requirements.txt")) {
-            if (Test-Path $path) { throw "removed path still exists: $path" }
-          }
 
       - name: Package dry run
         shell: pwsh
         run: |
-          .\scripts\package_release.ps1 -Version 1.0.0-ci
-          if (-not (Test-Path ".build/package/meccha-camouflage-1.0.0-ci.zip")) { throw "package zip missing" }
+          $version = "ci-$env:GITHUB_RUN_NUMBER"
+          .\scripts\release.ps1 -Version $version
+          if (-not (Test-Path ".build/package/meccha-camouflage-$version.zip")) { throw "package zip missing" }

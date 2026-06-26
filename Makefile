@@ -1,8 +1,8 @@
 NATIVE_APPLY_MODE ?= template_brush_paint
 VERSION ?= 1.0.0
-BUILD_PS := scripts/build_runtime.ps1
-RUN_PS := scripts/dev_flow.ps1
-PACKAGE_PS := scripts/package_release.ps1
+BUILD_PS := scripts/build.ps1
+RUN_PS := scripts/dev.ps1
+PACKAGE_PS := scripts/release.ps1
 
 .PHONY: build run package clean
 
