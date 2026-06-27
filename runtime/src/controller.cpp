@@ -472,7 +472,7 @@ namespace
     auto bridge_json(const Config& config, const std::filesystem::path& bridge_path, const std::string& state, const BridgeResponse& response = {}) -> std::string
     {
         return std::string("{\"state\":") + json_string(state) +
-               ",\"adapter\":\"xenos\"" +
+               ",\"adapter\":\"bridge\"" +
                ",\"host\":" + json_string(config.bridge_host) +
                ",\"port\":" + std::to_string(config.bridge_port) +
                ",\"bridge_path\":" + json_string(wide_to_utf8(bridge_path.wstring())) +
@@ -862,7 +862,7 @@ namespace
         diagnostics.set_last_run(std::string("{\"run_id\":") + json_string(run_id) +
                                  ",\"stage\":\"paint_started\",\"success\":false,\"process\":" + process_json(process, config.game_process_name) + "}");
         diagnostics.event("paint_started", "info", "paint", "paint_full_route started",
-                          std::string("{\"adapter\":\"xenos\",\"native_apply_mode\":") + json_string(config.native_apply_mode) + "}", run_id);
+                          std::string("{\"adapter\":\"bridge\",\"native_apply_mode\":") + json_string(config.native_apply_mode) + "}", run_id);
         const std::string payload = paint_payload(config, process);
         auto future = std::async(std::launch::async, [&]() {
             return run_bridge_command(config, bridge_path, "paint_full_route", payload);
