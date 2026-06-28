@@ -6603,6 +6603,8 @@ namespace
 
         std::vector<sdk::FPaintStroke> strokes{};
         strokes.reserve(static_cast<std::size_t>(plan_stats.enabled_samples));
+        const bool use_mesh_anchors = profile_available && runtime_triangle_cache_mode == "profile_verified";
+        metadata += ",\"replay_anchor_policy\":\"" + std::string(use_mesh_anchors ? "profile_verified_triangle_anchor" : "uv_only_dynamic_runtime") + "\"";
         int replay_front = 0;
         int replay_side = 0;
         int replay_back = 0;
@@ -6624,17 +6626,23 @@ namespace
                                                   sample.metallic,
                                                   sample.roughness,
                                                   sdk::EPaintChannelApplyMode::Override);
-            auto stroke = sdk_make_mesh_anchor_stroke(sample.u,
-                                                      sample.v,
-                                                      channel,
-                                                      brush,
-                                                      sdk::EPaintChannel::Albedo,
-                                                      sample.world_position,
-                                                      sample.local_position,
-                                                      sample.triangle_index,
-                                                      sample.barycentric_a,
-                                                      sample.barycentric_b,
-                                                      sample.barycentric_c);
+            auto stroke = use_mesh_anchors
+                              ? sdk_make_mesh_anchor_stroke(sample.u,
+                                                            sample.v,
+                                                            channel,
+                                                            brush,
+                                                            sdk::EPaintChannel::Albedo,
+                                                            sample.world_position,
+                                                            sample.local_position,
+                                                            sample.triangle_index,
+                                                            sample.barycentric_a,
+                                                            sample.barycentric_b,
+                                                            sample.barycentric_c)
+                              : sdk_make_uv_stroke(sample.u,
+                                                   sample.v,
+                                                   channel,
+                                                   brush,
+                                                   sdk::EPaintChannel::Albedo);
             if (stroke.bHasWorldPosition)
             {
                 ++replay_world_anchors;
