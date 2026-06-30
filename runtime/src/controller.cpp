@@ -1070,8 +1070,8 @@ namespace
             HGDIOBJ old_pen = SelectObject(dc, outline);
             HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
 
-            const int w = std::max(1, rect.right - rect.left);
-            const int h = std::max(1, rect.bottom - rect.top);
+            const int w = static_cast<int>(std::max<LONG>(1L, rect.right - rect.left));
+            const int h = static_cast<int>(std::max<LONG>(1L, rect.bottom - rect.top));
             const int cx = w / 2;
             const int pad = std::max(8, w / 20);
             std::vector<POINT> silhouette{
@@ -1121,7 +1121,7 @@ namespace
             wc.lpfnWndProc = source_preview_wnd_proc;
             wc.hInstance = instance;
             wc.lpszClassName = L"MecchaSourcePickPreview";
-            wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+            wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
             preview.class_atom = RegisterClassExW(&wc);
             if (!preview.class_atom && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
                 return false;
