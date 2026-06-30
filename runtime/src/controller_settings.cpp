@@ -179,8 +179,8 @@ namespace meccha
 
     void clamp_settings(AppSettings& settings)
     {
-        settings.panel_width = std::max(1180.0f, settings.panel_width);
-        settings.panel_height = std::max(860.0f, settings.panel_height);
+        settings.panel_width = std::max(900.0f, settings.panel_width);
+        settings.panel_height = std::max(640.0f, settings.panel_height);
         settings.opacity = static_cast<float>(clamp_double(settings.opacity, 0.35, 1.0));
         settings.tuning.stroke_size_texels = clamp_double(settings.tuning.stroke_size_texels, 1.0, 12.0);
         settings.tuning.coverage_step_texels = clamp_double(settings.tuning.coverage_step_texels, 1.0, 12.0);

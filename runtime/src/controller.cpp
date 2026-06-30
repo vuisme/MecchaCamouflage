@@ -3,6 +3,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <windowsx.h>
 #include <tlhelp32.h>
 #include <shellapi.h>
 #include <d3d11.h>
@@ -69,8 +70,9 @@ namespace
 {
     constexpr int BridgeResourceId = 101;
     constexpr int AppIconResourceId = 201;
-    constexpr LONG MinAppWindowWidth = 1180;
-    constexpr LONG MinAppWindowHeight = 860;
+    constexpr LONG MinAppWindowWidth = 900;
+    constexpr LONG MinAppWindowHeight = 640;
+    constexpr LONG AppResizeBorderPx = 8;
     constexpr LONG DefaultAppWindowInset = 80;
     constexpr LONG CustomTitleBarHeight = 36;
     constexpr LONG CustomCloseButtonWidth = 38;
@@ -936,6 +938,14 @@ namespace
         bool right_down{false};
     };
 
+    struct SourcePreviewWindow
+    {
+        HWND hwnd{nullptr};
+        ATOM class_atom{0};
+        int width{0};
+        int height{0};
+    };
+
     struct OverlayD3DState
     {
         ID3D11Device* device{nullptr};
@@ -1016,6 +1026,155 @@ namespace
         return y >= 0 && y <= CustomTitleBarHeight && x >= client.right - CustomCloseButtonWidth;
     }
 
+    auto app_resize_hit_test(HWND hwnd, LPARAM lparam) -> LRESULT
+    {
+        RECT window{};
+        if (!GetWindowRect(hwnd, &window))
+            return HTCLIENT;
+        const LONG x = GET_X_LPARAM(lparam);
+        const LONG y = GET_Y_LPARAM(lparam);
+        const bool left = x >= window.left && x < window.left + AppResizeBorderPx;
+        const bool right = x <= window.right && x > window.right - AppResizeBorderPx;
+        const bool top = y >= window.top && y < window.top + AppResizeBorderPx;
+        const bool bottom = y <= window.bottom && y > window.bottom - AppResizeBorderPx;
+        if (top && left) return HTTOPLEFT;
+        if (top && right) return HTTOPRIGHT;
+        if (bottom && left) return HTBOTTOMLEFT;
+        if (bottom && right) return HTBOTTOMRIGHT;
+        if (left) return HTLEFT;
+        if (right) return HTRIGHT;
+        if (top) return HTTOP;
+        if (bottom) return HTBOTTOM;
+        return HTCLIENT;
+    }
+
+    LRESULT CALLBACK source_preview_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+    {
+        switch (msg)
+        {
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_PAINT:
+        {
+            PAINTSTRUCT ps{};
+            HDC dc = BeginPaint(hwnd, &ps);
+            RECT rect{};
+            GetClientRect(hwnd, &rect);
+            HBRUSH clear = CreateSolidBrush(RGB(0, 0, 0));
+            FillRect(dc, &rect, clear);
+            DeleteObject(clear);
+            SetBkMode(dc, TRANSPARENT);
+
+            HPEN outline = CreatePen(PS_SOLID, 3, RGB(80, 230, 255));
+            HPEN accent = CreatePen(PS_DOT, 1, RGB(255, 255, 255));
+            HGDIOBJ old_pen = SelectObject(dc, outline);
+            HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+
+            const int w = std::max(1, rect.right - rect.left);
+            const int h = std::max(1, rect.bottom - rect.top);
+            const int cx = w / 2;
+            const int pad = std::max(8, w / 20);
+            std::vector<POINT> silhouette{
+                {cx, pad},
+                {cx + w / 8, pad + h / 12},
+                {cx + w / 6, pad + h / 5},
+                {w - pad, pad + h / 3},
+                {cx + w / 4, pad + h / 2},
+                {cx + w / 5, h - pad},
+                {cx, h - h / 6},
+                {cx - w / 5, h - pad},
+                {cx - w / 4, pad + h / 2},
+                {pad, pad + h / 3},
+                {cx - w / 6, pad + h / 5},
+                {cx - w / 8, pad + h / 12},
+                {cx, pad}
+            };
+            Polyline(dc, silhouette.data(), static_cast<int>(silhouette.size()));
+
+            SelectObject(dc, accent);
+            MoveToEx(dc, cx, pad, nullptr);
+            LineTo(dc, cx, h - pad);
+            MoveToEx(dc, pad, h / 2, nullptr);
+            LineTo(dc, w - pad, h / 2);
+            Ellipse(dc, cx - w / 9, pad + h / 18, cx + w / 9, pad + h / 4);
+
+            SelectObject(dc, old_brush);
+            SelectObject(dc, old_pen);
+            DeleteObject(outline);
+            DeleteObject(accent);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        }
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+
+    auto ensure_source_preview_window(SourcePreviewWindow& preview, HINSTANCE instance) -> bool
+    {
+        if (preview.hwnd && IsWindow(preview.hwnd))
+            return true;
+        if (!preview.class_atom)
+        {
+            WNDCLASSEXW wc{};
+            wc.cbSize = sizeof(wc);
+            wc.style = CS_HREDRAW | CS_VREDRAW;
+            wc.lpfnWndProc = source_preview_wnd_proc;
+            wc.hInstance = instance;
+            wc.lpszClassName = L"MecchaSourcePickPreview";
+            wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+            preview.class_atom = RegisterClassExW(&wc);
+            if (!preview.class_atom && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+                return false;
+        }
+        preview.hwnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                                       L"MecchaSourcePickPreview",
+                                       L"Meccha Source Picker",
+                                       WS_POPUP,
+                                       0,
+                                       0,
+                                       1,
+                                       1,
+                                       nullptr,
+                                       nullptr,
+                                       instance,
+                                       nullptr);
+        if (!preview.hwnd)
+            return false;
+        SetLayeredWindowAttributes(preview.hwnd, RGB(0, 0, 0), 255, LWA_COLORKEY);
+        return true;
+    }
+
+    void hide_source_preview_window(SourcePreviewWindow& preview)
+    {
+        if (preview.hwnd && IsWindow(preview.hwnd))
+            ShowWindow(preview.hwnd, SW_HIDE);
+    }
+
+    void destroy_source_preview_window(SourcePreviewWindow& preview)
+    {
+        if (preview.hwnd && IsWindow(preview.hwnd))
+            DestroyWindow(preview.hwnd);
+        preview.hwnd = nullptr;
+    }
+
+    void update_source_preview_window(SourcePreviewWindow& preview, HINSTANCE instance, const POINT& cursor, double client_width, double client_height)
+    {
+        if (!ensure_source_preview_window(preview, instance))
+            return;
+        const int width = std::max(140, std::min(360, static_cast<int>(std::round(client_width * 0.20))));
+        const int height = std::max(220, std::min(560, static_cast<int>(std::round(client_height * 0.48))));
+        const int left = cursor.x - width / 2;
+        const int top = cursor.y - height / 2;
+        SetWindowPos(preview.hwnd, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        if (preview.width != width || preview.height != height)
+        {
+            preview.width = width;
+            preview.height = height;
+        }
+        InvalidateRect(preview.hwnd, nullptr, TRUE);
+        UpdateWindow(preview.hwnd);
+    }
+
     LRESULT CALLBACK overlay_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     {
         if ((msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP) && custom_close_hit(hwnd, lparam))
@@ -1027,6 +1186,13 @@ namespace
             return true;
         switch (msg)
         {
+        case WM_NCHITTEST:
+        {
+            const LRESULT hit = app_resize_hit_test(hwnd, lparam);
+            if (hit != HTCLIENT)
+                return hit;
+            return HTCLIENT;
+        }
         case WM_GETMINMAXINFO:
         {
             auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
@@ -1934,7 +2100,7 @@ namespace
         HWND hwnd = CreateWindowExW(WS_EX_APPWINDOW,
                                     wc.lpszClassName,
                                     L"Meccha Camouflage",
-                                    WS_POPUP,
+                                    WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX,
                                     rect.left,
                                     rect.top,
                                     rect.right - rect.left,
@@ -2014,6 +2180,7 @@ namespace
 
         bool done = false;
         SourcePickState source_pick{};
+        SourcePreviewWindow source_preview{};
 
         auto start_paint = [&](const char* trigger, bool use_source_pick, double source_offset_x, double source_offset_y) {
             if (service.paint_future_active || !service.process.pid || !service.bridge_ready)
@@ -2388,6 +2555,11 @@ namespace
                     const double client_height = static_cast<double>(std::max<LONG>(1, client_rect.bottom - client_rect.top));
                     source_pick.offset_x = static_cast<double>(cursor.x) - (static_cast<double>(client_origin.x) + client_width * 0.5);
                     source_pick.offset_y = static_cast<double>(cursor.y) - (static_cast<double>(client_origin.y) + client_height * 0.5);
+                    update_source_preview_window(source_preview, wc.hInstance, cursor, client_width, client_height);
+                }
+                else
+                {
+                    hide_source_preview_window(source_preview);
                 }
 
                 const bool left_down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
@@ -2396,6 +2568,7 @@ namespace
                 if ((right_down && !source_pick.right_down) || escape_down)
                 {
                     source_pick.active = false;
+                    hide_source_preview_window(source_preview);
                     diagnostics.event("source_pick_canceled", "info", "paint", "Source picker canceled.");
                 }
                 else if (left_down && !source_pick.left_down)
@@ -2403,6 +2576,7 @@ namespace
                     const double offset_x = source_pick.offset_x;
                     const double offset_y = source_pick.offset_y;
                     source_pick.active = false;
+                    hide_source_preview_window(source_preview);
                     diagnostics.event("source_pick_selected",
                                       "info",
                                       "paint",
@@ -2828,6 +3002,7 @@ namespace
         ImGui_ImplDX11_Shutdown();
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
+        destroy_source_preview_window(source_preview);
         cleanup_device_d3d();
         DestroyWindow(hwnd);
         UnregisterClassW(wc.lpszClassName, wc.hInstance);

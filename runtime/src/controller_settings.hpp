@@ -26,8 +26,8 @@ namespace meccha
         int layout_version{13};
         float panel_x{-1.0f};
         float panel_y{-1.0f};
-        float panel_width{1280.0f};
-        float panel_height{860.0f};
+        float panel_width{1040.0f};
+        float panel_height{720.0f};
         int log_retention_days{14};
         std::wstring game_process_name{DefaultGameProcessName};
         bool always_on_top{true};
