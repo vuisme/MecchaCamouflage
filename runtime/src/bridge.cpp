@@ -2714,6 +2714,9 @@ namespace
         double capture_aspect{1.0};
         double capture_scale_x{1.0};
         double capture_scale_y{1.0};
+        bool source_pick_enabled{false};
+        double source_pick_offset_x{0.0};
+        double source_pick_offset_y{0.0};
         std::string capture_resolution_source{"viewport"};
         std::uintptr_t camera_manager{0};
         bool camera_location_used{false};
@@ -3428,7 +3431,10 @@ namespace
                                   const SdkContext& ctx,
                                   const SdkNativeFrontSampleResult& native_front,
                                   int target_width,
-                                  int target_height) -> SdkFrontCaptureResult;
+                                  int target_height,
+                                  bool source_pick_enabled = false,
+                                  double source_pick_offset_x = 0.0,
+                                  double source_pick_offset_y = 0.0) -> SdkFrontCaptureResult;
     auto sdk_capture_metadata(const SdkFrontCaptureResult& capture) -> std::string;
     auto sdk_srgb_to_linear_unit(double value) -> double;
     auto sdk_make_channel(double r,
@@ -5638,8 +5644,10 @@ namespace
             return false;
         }
 
-        const int px = std::max(0, std::min(capture.width - 1, static_cast<int>(std::round(sx))));
-        const int py = std::max(0, std::min(capture.height - 1, static_cast<int>(std::round(sy))));
+        const double source_sx = sx + (capture.source_pick_enabled ? capture.source_pick_offset_x * capture.capture_scale_x : 0.0);
+        const double source_sy = sy + (capture.source_pick_enabled ? capture.source_pick_offset_y * capture.capture_scale_y : 0.0);
+        const int px = std::max(0, std::min(capture.width - 1, static_cast<int>(std::round(source_sx))));
+        const int py = std::max(0, std::min(capture.height - 1, static_cast<int>(std::round(source_sy))));
         const int bx = capture.capture_flip_x ? (capture.width - 1 - px) : px;
         const int by = capture.capture_flip_y ? (capture.height - 1 - py) : py;
         const auto pixel_index = static_cast<std::size_t>(by) * static_cast<std::size_t>(capture.width) +
@@ -6293,6 +6301,9 @@ namespace
         const int tuning_max_strokes = json_int_field(request, "max_strokes", 25000, 1000, 100000);
         const int tuning_server_batch_limit = json_int_field(request, "server_batch_limit", ServerPaintBatchStrokeLimit, 1, ServerPaintBatchStrokeLimit);
         const int tuning_server_batch_delay_ms = json_int_field(request, "server_batch_delay_ms", ServerPaintBatchDelayMs, 1, 1000);
+        const bool source_pick_enabled = json_bool_field(request, "source_pick_enabled", false);
+        const double source_pick_offset_x = clamp_range(json_number_field(request, "source_pick_offset_x", 0.0), -10000.0, 10000.0);
+        const double source_pick_offset_y = clamp_range(json_number_field(request, "source_pick_offset_y", 0.0), -10000.0, 10000.0);
 
         std::string metadata = "\"route\":\"mesh_first_paint\"";
         metadata += ",\"mesh_first_pipeline\":\"profile_v2_pose_uv_atlas_server_batch\"";
@@ -6313,6 +6324,9 @@ namespace
         metadata += ",\"max_strokes\":" + std::to_string(tuning_max_strokes);
         metadata += ",\"server_batch_limit\":" + std::to_string(tuning_server_batch_limit);
         metadata += ",\"server_batch_delay_ms\":" + std::to_string(tuning_server_batch_delay_ms);
+        metadata += ",\"source_pick_enabled\":" + std::string(json_bool(source_pick_enabled));
+        metadata += ",\"source_pick_offset_x\":" + std::to_string(source_pick_offset_x);
+        metadata += ",\"source_pick_offset_y\":" + std::to_string(source_pick_offset_y);
         metadata += ",\"bridge_events\":[\"mesh_profile_load\",\"pose_resolve\",\"planner_build\",\"bridge.paint_batch.request\",\"bridge.paint_batch.response\"]";
 
         if (queued_job)
@@ -6725,7 +6739,14 @@ namespace
                               0.0,
                               "\"source_samples\":" + std::to_string(native_front.samples.size()));
         const auto capture_started = std::chrono::steady_clock::now();
-        const auto capture = sdk_capture_front_colors(ref, ctx, native_front, capture_request_width, capture_request_height);
+        const auto capture = sdk_capture_front_colors(ref,
+                                                      ctx,
+                                                      native_front,
+                                                      capture_request_width,
+                                                      capture_request_height,
+                                                      source_pick_enabled,
+                                                      source_pick_offset_x,
+                                                      source_pick_offset_y);
         const auto capture_elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - capture_started).count();
         metadata += sdk_capture_metadata(capture);
         metadata += ",\"mesh_capture_elapsed_ms\":" + std::to_string(capture_elapsed_ms);
@@ -9159,9 +9180,15 @@ namespace
                                   const SdkContext& ctx,
                                   const SdkNativeFrontSampleResult& native_front,
                                   int target_width,
-                                  int target_height) -> SdkFrontCaptureResult
+                                  int target_height,
+                                  bool source_pick_enabled,
+                                  double source_pick_offset_x,
+                                  double source_pick_offset_y) -> SdkFrontCaptureResult
     {
         SdkFrontCaptureResult out{};
+        out.source_pick_enabled = source_pick_enabled;
+        out.source_pick_offset_x = source_pick_offset_x;
+        out.source_pick_offset_y = source_pick_offset_y;
         if (native_front.samples.empty())
         {
             out.failure = "front_capture_no_surface_samples";
@@ -9670,8 +9697,12 @@ namespace
         out.samples.reserve(projected.size());
         for (const auto& projected_sample : projected)
         {
-            const int bx = best_flip_x ? (out.width - 1 - projected_sample.x) : projected_sample.x;
-            const int by = best_flip_y ? (out.height - 1 - projected_sample.y) : projected_sample.y;
+            const int source_x = std::max(0, std::min(out.width - 1,
+                projected_sample.x + (out.source_pick_enabled ? static_cast<int>(std::round(out.source_pick_offset_x * out.capture_scale_x)) : 0)));
+            const int source_y = std::max(0, std::min(out.height - 1,
+                projected_sample.y + (out.source_pick_enabled ? static_cast<int>(std::round(out.source_pick_offset_y * out.capture_scale_y)) : 0)));
+            const int bx = best_flip_x ? (out.width - 1 - source_x) : source_x;
+            const int by = best_flip_y ? (out.height - 1 - source_y) : source_y;
             const auto pixel_index = static_cast<std::size_t>(by) * static_cast<std::size_t>(out.width) + static_cast<std::size_t>(bx);
             if (pixel_index >= out.capture_pixels.size())
             {
@@ -9773,6 +9804,9 @@ namespace
                ",\"capture_aspect\":" + std::to_string(capture.capture_aspect) +
                ",\"capture_scale_x\":" + std::to_string(capture.capture_scale_x) +
                ",\"capture_scale_y\":" + std::to_string(capture.capture_scale_y) +
+               ",\"capture_source_pick_enabled\":" + std::string(json_bool(capture.source_pick_enabled)) +
+               ",\"capture_source_pick_offset_x\":" + std::to_string(capture.source_pick_offset_x) +
+               ",\"capture_source_pick_offset_y\":" + std::to_string(capture.source_pick_offset_y) +
                ",\"front_capture_render_target\":\"" + hex_address(capture.render_target) + "\"" +
                ",\"front_capture_actor\":\"" + hex_address(capture.capture_actor) + "\"" +
                ",\"front_capture_component\":\"" + hex_address(capture.capture_component) + "\"" +

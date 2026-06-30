@@ -196,6 +196,8 @@ namespace meccha
         }
         if (settings.paint_hotkey.empty())
             settings.paint_hotkey = "F10";
+        if (settings.source_pick_hotkey.empty())
+            settings.source_pick_hotkey = "F9";
     }
 
     auto load_settings() -> AppSettings
@@ -216,6 +218,8 @@ namespace meccha
         settings.opacity = static_cast<float>(extract_json_number(text, "opacity", settings.opacity));
         if (const auto hotkey = extract_json_string(text, "paint_hotkey"); !hotkey.empty())
             settings.paint_hotkey = hotkey;
+        if (const auto hotkey = extract_json_string(text, "source_pick_hotkey"); !hotkey.empty())
+            settings.source_pick_hotkey = hotkey;
         if (layout_version >= settings.layout_version)
         {
             settings.tuning.stroke_size_texels = extract_json_number(text, "stroke_size_texels", settings.tuning.stroke_size_texels);
@@ -247,6 +251,7 @@ namespace meccha
             "  \"always_on_top\": " + std::string(settings.always_on_top ? "true" : "false") + ",\n" +
             "  \"opacity\": " + std::to_string(settings.opacity) + ",\n" +
             "  \"paint_hotkey\": " + json_string(settings.paint_hotkey) + ",\n" +
+            "  \"source_pick_hotkey\": " + json_string(settings.source_pick_hotkey) + ",\n" +
             "  \"stroke_size_texels\": " + std::to_string(settings.tuning.stroke_size_texels) + ",\n" +
             "  \"coverage_step_texels\": " + std::to_string(settings.tuning.coverage_step_texels) + ",\n" +
             "  \"side_source_max_uv\": " + std::to_string(settings.tuning.side_source_max_uv) + ",\n" +

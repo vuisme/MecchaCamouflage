@@ -23,7 +23,7 @@ namespace meccha
 
     struct AppSettings
     {
-        int layout_version{12};
+        int layout_version{13};
         float panel_x{-1.0f};
         float panel_y{-1.0f};
         float panel_width{1280.0f};
@@ -33,6 +33,7 @@ namespace meccha
         bool always_on_top{true};
         float opacity{1.0f};
         std::string paint_hotkey{"F10"};
+        std::string source_pick_hotkey{"F9"};
         PaintTuning tuning{};
         bool show_info{true};
         bool show_warning{true};

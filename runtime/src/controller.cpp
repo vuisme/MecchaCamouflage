@@ -98,6 +98,9 @@ namespace
         std::string native_apply_mode{"mesh_first_paint"};
         DWORD parent_pid{0};
         PaintTuning tuning{};
+        bool source_pick_enabled{false};
+        double source_pick_offset_x{0.0};
+        double source_pick_offset_y{0.0};
     };
 
     struct ProcessInfo
@@ -924,6 +927,15 @@ namespace
         double last_bridge_check{0.0};
     };
 
+    struct SourcePickState
+    {
+        bool active{false};
+        double offset_x{0.0};
+        double offset_y{0.0};
+        bool left_down{false};
+        bool right_down{false};
+    };
+
     struct OverlayD3DState
     {
         ID3D11Device* device{nullptr};
@@ -1091,6 +1103,29 @@ namespace
         DWORD pid = 0;
         GetWindowThreadProcessId(foreground, &pid);
         return pid;
+    }
+
+    auto top_level_window_for_process(DWORD target_pid) -> HWND
+    {
+        struct Search
+        {
+            DWORD pid{0};
+            HWND hwnd{nullptr};
+        } search{target_pid, nullptr};
+
+        EnumWindows([](HWND hwnd, LPARAM lparam) -> BOOL {
+            auto* search = reinterpret_cast<Search*>(lparam);
+            DWORD pid = 0;
+            GetWindowThreadProcessId(hwnd, &pid);
+            if (pid != search->pid || !IsWindowVisible(hwnd))
+                return TRUE;
+            RECT rect{};
+            if (!GetWindowRect(hwnd, &rect) || rect.right <= rect.left || rect.bottom <= rect.top)
+                return TRUE;
+            search->hwnd = hwnd;
+            return FALSE;
+        }, reinterpret_cast<LPARAM>(&search));
+        return search.hwnd;
     }
 
     auto mode_to_route(const std::string& native_apply_mode) -> std::string
@@ -1615,6 +1650,9 @@ namespace
         auto payload = std::string("{\"native_apply_mode\":") + json_string(config.native_apply_mode) +
                        ",\"route\":" + json_string(mode_to_route(config.native_apply_mode)) +
                        ",\"research_artifacts\":" + (research_artifacts ? "true" : "false") +
+                       ",\"source_pick_enabled\":" + (config.source_pick_enabled ? "true" : "false") +
+                       ",\"source_pick_offset_x\":" + std::to_string(config.source_pick_offset_x) +
+                       ",\"source_pick_offset_y\":" + std::to_string(config.source_pick_offset_y) +
                        ",\"process\":{\"pid\":" + std::to_string(process.pid) +
                        ",\"name\":" + json_string(wide_to_utf8(process.name)) + "}" +
                        ",\"tuning\":{\"stroke_size_texels\":" + std::to_string(config.tuning.stroke_size_texels) +
@@ -1955,10 +1993,13 @@ namespace
         bool applied_topmost = settings.always_on_top;
         OverlayServiceState service{};
         OverlayHotkeyState hotkey_state{};
-        OverlayHotkeys hotkeys{meccha::parse_hotkey_binding(settings.paint_hotkey)};
+        OverlayHotkeys hotkeys{meccha::parse_hotkey_binding(settings.paint_hotkey),
+                               meccha::parse_hotkey_binding(settings.source_pick_hotkey)};
         diagnostics.set_hotkey(std::string("{\"paint\":") + json_string(meccha::hotkey_to_string(hotkeys.paint_binding())) +
+                               ",\"source_pick\":" + json_string(meccha::hotkey_to_string(hotkeys.source_pick_binding())) +
                                ",\"backend\":" + hotkeys.backend_json() + "}");
         trace_buffer.push("hotkey", "register", std::string("{\"paint\":") + json_string(meccha::hotkey_to_string(hotkeys.paint_binding())) +
+                                               ",\"source_pick\":" + json_string(meccha::hotkey_to_string(hotkeys.source_pick_binding())) +
                                                ",\"backend\":" + hotkeys.backend_json() + "}");
         diagnostics.event("runtime_start", "info", "startup", "desktop app started",
                           std::string("{\"pid\":") + std::to_string(GetCurrentProcessId()) +
@@ -1972,8 +2013,9 @@ namespace
                           ",\"parent_pid\":" + std::to_string(config.parent_pid) + "}");
 
         bool done = false;
+        SourcePickState source_pick{};
 
-        auto start_paint = [&](const char* trigger) {
+        auto start_paint = [&](const char* trigger, bool use_source_pick, double source_offset_x, double source_offset_y) {
             if (service.paint_future_active || !service.process.pid || !service.bridge_ready)
                 return;
             if (paint_editing)
@@ -1995,11 +2037,20 @@ namespace
             }
             meccha::clamp_settings(persisted_settings);
             config.tuning = persisted_settings.tuning;
-            diagnostics.event("paint_triggered", "info", "paint", std::string("paint trigger detected: ") + trigger);
+            config.source_pick_enabled = use_source_pick;
+            config.source_pick_offset_x = use_source_pick ? source_offset_x : 0.0;
+            config.source_pick_offset_y = use_source_pick ? source_offset_y : 0.0;
+            diagnostics.event("paint_triggered", "info", "paint", std::string("paint trigger detected: ") + trigger,
+                              std::string("{\"source_pick_enabled\":") + (use_source_pick ? "true" : "false") +
+                                  ",\"source_pick_offset_x\":" + std::to_string(config.source_pick_offset_x) +
+                                  ",\"source_pick_offset_y\":" + std::to_string(config.source_pick_offset_y) + "}");
             trace_buffer.push("paint.start",
                               "",
                               std::string("{\"trigger\":") + json_string(trigger) +
                               ",\"hotkey\":" + json_string(meccha::hotkey_to_string(hotkeys.paint_binding())) +
+                              ",\"source_pick_enabled\":" + (use_source_pick ? "true" : "false") +
+                              ",\"source_pick_offset_x\":" + std::to_string(config.source_pick_offset_x) +
+                              ",\"source_pick_offset_y\":" + std::to_string(config.source_pick_offset_y) +
                               ",\"stroke_size_texels\":" + std::to_string(persisted_settings.tuning.stroke_size_texels) +
                               ",\"coverage_step_texels\":" + std::to_string(persisted_settings.tuning.coverage_step_texels) +
                               ",\"side_source_max_uv\":" + std::to_string(persisted_settings.tuning.side_source_max_uv) +
@@ -2037,6 +2088,7 @@ namespace
             dst.always_on_top = src.always_on_top;
             dst.opacity = src.opacity;
             dst.paint_hotkey = src.paint_hotkey;
+            dst.source_pick_hotkey = src.source_pick_hotkey;
             dst.show_info = src.show_info;
             dst.show_warning = src.show_warning;
             dst.show_error = src.show_error;
@@ -2046,6 +2098,7 @@ namespace
             dst.always_on_top = src.always_on_top;
             dst.opacity = src.opacity;
             dst.paint_hotkey = src.paint_hotkey;
+            dst.source_pick_hotkey = src.source_pick_hotkey;
         };
 
         auto capture_window_layout = [&]() {
@@ -2276,6 +2329,92 @@ namespace
                 }
             }
 
+            if (hotkey_state.source_pick_requested)
+            {
+                if (paint_editing)
+                    diagnostics.event("source_pick_hotkey_ignored", "warning", "settings", "Paint settings are being edited; source picker ignored.");
+                else if (service.state == ControllerServiceState::Stopped || service.state == ControllerServiceState::Error)
+                    request_service_start("source_pick_hotkey");
+                else if (service.state == ControllerServiceState::Stopping)
+                    diagnostics.event("source_pick_hotkey_ignored", "warning", "service", "Service is stopping; source picker ignored.");
+                else if (service.paint_running || service.paint_future_active)
+                    diagnostics.event("source_pick_hotkey_ignored", "warning", "paint", "Paint is already running; source picker ignored.");
+                else if (service.process.pid && service.bridge_ready)
+                {
+                    const DWORD foreground_pid = foreground_process_id();
+                    if (foreground_pid != 0 && foreground_pid != service.process.pid)
+                    {
+                        diagnostics.event("source_pick_hotkey_ignored",
+                                          "warning",
+                                          "focus",
+                                          "Focus the game window before source picking.",
+                                          std::string("{\"foreground_pid\":") + std::to_string(foreground_pid) +
+                                              ",\"game_pid\":" + std::to_string(service.process.pid) + "}");
+                    }
+                    else
+                    {
+                        source_pick.active = true;
+                        source_pick.offset_x = 0.0;
+                        source_pick.offset_y = 0.0;
+                        source_pick.left_down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+                        source_pick.right_down = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+                        diagnostics.event("source_pick_started", "info", "paint", "Source picker active. Click the game window to copy colors from that screen offset.");
+                    }
+                }
+                else if (service.process.pid)
+                {
+                    service.bridge_ready = false;
+                    service.bridge_state = "Recovering";
+                    service.injected_pid = 0;
+                    service.last_bridge_check = 0.0;
+                    service.waiting_for_hotkey_logged = false;
+                }
+                else
+                {
+                    diagnostics.event("source_pick_hotkey_rejected", "error", "not_ready", "Not ready. Wait for game and bridge.");
+                }
+                hotkey_state.source_pick_requested = false;
+            }
+
+            if (source_pick.active)
+            {
+                POINT cursor{};
+                HWND game_window = service.process.pid ? top_level_window_for_process(service.process.pid) : nullptr;
+                RECT client_rect{};
+                POINT client_origin{};
+                if (GetCursorPos(&cursor) && game_window && GetClientRect(game_window, &client_rect) && ClientToScreen(game_window, &client_origin))
+                {
+                    const double client_width = static_cast<double>(std::max<LONG>(1, client_rect.right - client_rect.left));
+                    const double client_height = static_cast<double>(std::max<LONG>(1, client_rect.bottom - client_rect.top));
+                    source_pick.offset_x = static_cast<double>(cursor.x) - (static_cast<double>(client_origin.x) + client_width * 0.5);
+                    source_pick.offset_y = static_cast<double>(cursor.y) - (static_cast<double>(client_origin.y) + client_height * 0.5);
+                }
+
+                const bool left_down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+                const bool right_down = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+                const bool escape_down = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+                if ((right_down && !source_pick.right_down) || escape_down)
+                {
+                    source_pick.active = false;
+                    diagnostics.event("source_pick_canceled", "info", "paint", "Source picker canceled.");
+                }
+                else if (left_down && !source_pick.left_down)
+                {
+                    const double offset_x = source_pick.offset_x;
+                    const double offset_y = source_pick.offset_y;
+                    source_pick.active = false;
+                    diagnostics.event("source_pick_selected",
+                                      "info",
+                                      "paint",
+                                      "Source picker selected a color source offset.",
+                                      std::string("{\"source_pick_offset_x\":") + std::to_string(offset_x) +
+                                          ",\"source_pick_offset_y\":" + std::to_string(offset_y) + "}");
+                    start_paint("Source Pick", true, offset_x, offset_y);
+                }
+                source_pick.left_down = left_down;
+                source_pick.right_down = right_down;
+            }
+
             if (hotkey_state.paint_requested)
             {
                 if (paint_editing)
@@ -2293,7 +2432,7 @@ namespace
                     }
                 }
                 else if (service.process.pid && service.bridge_ready)
-                    start_paint("Hotkey");
+                    start_paint("Hotkey", false, 0.0, 0.0);
                 else if (service.process.pid)
                 {
                     service.bridge_ready = false;
@@ -2398,7 +2537,15 @@ namespace
             else
             {
                 ui_runtime.status_title = "Paint ready.";
-                ui_runtime.status_detail = "Hotkey: " + meccha::hotkey_to_string(hotkeys.paint_binding());
+                ui_runtime.status_detail = "Hotkey: " + meccha::hotkey_to_string(hotkeys.paint_binding()) +
+                                           " | Source: " + meccha::hotkey_to_string(hotkeys.source_pick_binding());
+            }
+            if (source_pick.active)
+            {
+                ui_runtime.status_title = "Source picker.";
+                ui_runtime.status_detail = "Move cursor over source area, left click to paint, right click or Esc to cancel. Offset: " +
+                                           std::to_string(static_cast<int>(std::round(source_pick.offset_x))) + ", " +
+                                           std::to_string(static_cast<int>(std::round(source_pick.offset_y)));
             }
             ui_runtime.app_editing = app_editing;
             ui_runtime.paint_editing = paint_editing;
@@ -2440,7 +2587,7 @@ namespace
                 }
                 else if (service.process.pid && service.bridge_ready)
                 {
-                    start_paint("UI Hotkey");
+                    start_paint("UI Hotkey", false, 0.0, 0.0);
                 }
                 else if (service.process.pid)
                 {
@@ -2522,6 +2669,7 @@ namespace
                 settings.always_on_top = defaults.always_on_top;
                 settings.opacity = defaults.opacity;
                 settings.paint_hotkey = defaults.paint_hotkey;
+                settings.source_pick_hotkey = defaults.source_pick_hotkey;
                 diagnostics.event("app_settings_reset", "info", "settings", "App Settings reset to defaults.");
             }
             if (actions.reset_paint_clicked && paint_editing)
@@ -2549,14 +2697,20 @@ namespace
                 next.tuning = persisted_settings.tuning;
 
                 const HotkeyBinding previous_hotkey = hotkeys.paint_binding();
+                const HotkeyBinding previous_source_pick_hotkey = hotkeys.source_pick_binding();
                 std::string register_error;
-                const bool hotkey_registered = hotkeys.set_paint_hotkey(meccha::parse_hotkey_binding(next.paint_hotkey), &register_error);
+                const bool hotkey_registered = hotkeys.set_paint_hotkey(meccha::parse_hotkey_binding(next.paint_hotkey), &register_error) &&
+                                               hotkeys.set_source_pick_hotkey(meccha::parse_hotkey_binding(next.source_pick_hotkey), &register_error);
                 if (!hotkey_registered)
                 {
+                    std::string revert_error;
+                    hotkeys.set_paint_hotkey(previous_hotkey, &revert_error);
+                    hotkeys.set_source_pick_hotkey(previous_source_pick_hotkey, &revert_error);
                     diagnostics.event("hotkey_register_failed", "error", "settings", register_error.empty() ? "RegisterHotKey failed." : register_error);
                     trace_buffer.push("hotkey", "register", std::string("{\"success\":false,\"error\":") +
                                                        json_string(register_error.empty() ? "RegisterHotKey failed." : register_error) + "}");
                     settings.paint_hotkey = persisted_settings.paint_hotkey;
+                    settings.source_pick_hotkey = persisted_settings.source_pick_hotkey;
                 }
                 else if (meccha::save_settings(next))
                 {
@@ -2580,8 +2734,10 @@ namespace
                     if (topmost_changed)
                         trace_buffer.push("window", "topmost", std::string("{\"always_on_top\":") + (persisted_settings.always_on_top ? "true" : "false") + "}");
                     diagnostics.set_hotkey(std::string("{\"paint\":") + json_string(persisted_settings.paint_hotkey) +
+                                           ",\"source_pick\":" + json_string(persisted_settings.source_pick_hotkey) +
                                            ",\"backend\":" + hotkeys.backend_json() + "}");
                     trace_buffer.push("hotkey", "register", std::string("{\"paint\":") + json_string(persisted_settings.paint_hotkey) +
+                                                       ",\"source_pick\":" + json_string(persisted_settings.source_pick_hotkey) +
                                                        ",\"backend\":" + hotkeys.backend_json() + "}");
                     trace_buffer.push("config", "save", std::string("{\"path\":") + json_string(wide_to_utf8(meccha::config_path().wstring())) +
                                                      ",\"scope\":\"app\"}");
@@ -2591,7 +2747,9 @@ namespace
                 {
                     std::string revert_error;
                     hotkeys.set_paint_hotkey(previous_hotkey, &revert_error);
+                    hotkeys.set_source_pick_hotkey(previous_source_pick_hotkey, &revert_error);
                     settings.paint_hotkey = persisted_settings.paint_hotkey;
+                    settings.source_pick_hotkey = persisted_settings.source_pick_hotkey;
                     trace_buffer.push("config", "save", std::string("{\"success\":false,\"path\":") + json_string(wide_to_utf8(meccha::config_path().wstring())) +
                                                      ",\"scope\":\"app\"}");
                     diagnostics.event("app_settings_save_failed", "error", "settings", "Failed to save App Settings.");

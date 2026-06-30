@@ -210,15 +210,17 @@ namespace meccha
         return true;
     }
 
-    OverlayHotkeys::OverlayHotkeys(HotkeyBinding paint)
-        : paint_(paint)
+    OverlayHotkeys::OverlayHotkeys(HotkeyBinding paint, HotkeyBinding source_pick)
+        : paint_(paint), source_pick_(source_pick)
     {
         set_paint_hotkey(paint_);
+        set_source_pick_hotkey(source_pick_);
     }
 
     OverlayHotkeys::~OverlayHotkeys()
     {
         unregister_paint();
+        unregister_source_pick();
     }
 
     void OverlayHotkeys::unregister_paint()
@@ -226,6 +228,13 @@ namespace meccha
         if (paint_registered_)
             UnregisterHotKey(nullptr, 1);
         paint_registered_ = false;
+    }
+
+    void OverlayHotkeys::unregister_source_pick()
+    {
+        if (source_pick_registered_)
+            UnregisterHotKey(nullptr, 2);
+        source_pick_registered_ = false;
     }
 
     auto OverlayHotkeys::set_paint_hotkey(HotkeyBinding paint, std::string* error) -> bool
@@ -254,15 +263,46 @@ namespace meccha
         return true;
     }
 
+    auto OverlayHotkeys::set_source_pick_hotkey(HotkeyBinding source_pick, std::string* error) -> bool
+    {
+        if (source_pick_registered_ && source_pick.vk == source_pick_.vk && source_pick.modifiers == source_pick_.modifiers)
+            return true;
+
+        const HotkeyBinding previous = source_pick_;
+        const bool previous_registered = source_pick_registered_;
+        unregister_source_pick();
+        source_pick_ = source_pick;
+        source_pick_down_ = false;
+        source_pick_registered_ = RegisterHotKey(nullptr, 2, source_pick_.modifiers | MOD_NOREPEAT, source_pick_.vk) != FALSE;
+        if (!source_pick_registered_)
+        {
+            const DWORD code = GetLastError();
+            if (error)
+                *error = "RegisterHotKey failed win32=" + std::to_string(code);
+            source_pick_ = previous;
+            if (previous_registered)
+                source_pick_registered_ = RegisterHotKey(nullptr, 2, source_pick_.modifiers | MOD_NOREPEAT, source_pick_.vk) != FALSE;
+            return false;
+        }
+        if (error)
+            error->clear();
+        return true;
+    }
+
     auto OverlayHotkeys::backend_json() const -> std::string
     {
-        return hotkey_backend_json(paint_, paint_registered_);
+        return std::string("{\"paint\":\"") + (paint_registered_ ? "register_hotkey" : "async_state") +
+               "\",\"paint_key\":\"" + hotkey_to_string(paint_) +
+               "\",\"source_pick\":\"" + (source_pick_registered_ ? "register_hotkey" : "async_state") +
+               "\",\"source_pick_key\":\"" + hotkey_to_string(source_pick_) + "\"}";
     }
 
     void OverlayHotkeys::handle_message(const MSG& msg, OverlayHotkeyState& state) const
     {
         if (msg.message == WM_HOTKEY && msg.wParam == 1)
             state.paint_requested = true;
+        if (msg.message == WM_HOTKEY && msg.wParam == 2)
+            state.source_pick_requested = true;
     }
 
     void OverlayHotkeys::poll_fallback(OverlayHotkeyState& state)
@@ -272,6 +312,12 @@ namespace meccha
             const bool down = (GetAsyncKeyState(static_cast<int>(paint_.vk)) & 0x8000) != 0;
             state.paint_requested = state.paint_requested || (down && !paint_down_);
             paint_down_ = down;
+        }
+        if (!source_pick_registered_)
+        {
+            const bool down = (GetAsyncKeyState(static_cast<int>(source_pick_.vk)) & 0x8000) != 0;
+            state.source_pick_requested = state.source_pick_requested || (down && !source_pick_down_);
+            source_pick_down_ = down;
         }
     }
 }

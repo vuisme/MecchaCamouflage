@@ -6,6 +6,7 @@ on:
       - main
       - master
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -36,3 +37,9 @@ jobs:
           $version = "ci-$env:GITHUB_RUN_NUMBER"
           .\scripts\release.ps1 -Version $version
           if (-not (Test-Path ".build/package/meccha-camouflage-$version.zip")) { throw "package zip missing" }
+
+      - name: Upload packaged build
+        uses: actions/upload-artifact@v4
+        with:
+          name: meccha-camouflage-ci-${{ github.run_number }}
+          path: .build/package/meccha-camouflage-ci-${{ github.run_number }}.zip
